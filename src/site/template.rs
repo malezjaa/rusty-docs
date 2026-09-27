@@ -12,6 +12,7 @@ pub(super) fn ensure_template(site_dir: &Path) -> Result<()> {
     let marker = site_dir.join(MARKER);
     if marker.is_file() {
         copy_missing_embedded_dir(&TEMPLATE, site_dir)?;
+        upgrade_mdx_image_dimensions(site_dir)?;
         sync_api_component_styles(site_dir)?;
         upgrade_api_item_component(site_dir)?;
         upgrade_shiki_dependency(site_dir)?;
@@ -40,6 +41,72 @@ pub(super) fn ensure_template(site_dir: &Path) -> Result<()> {
     fs::write(&marker, "Managed by rusty-docs.\n")
         .with_context(|| format!("Could not write {}", marker.display()))?;
     Ok(())
+}
+
+fn upgrade_mdx_image_dimensions(site_dir: &Path) -> Result<()> {
+    let path = site_dir.join("components/mdx.tsx");
+    if !path.is_file() {
+        return Ok(());
+    }
+
+    let mut source = fs::read_to_string(&path)
+        .with_context(|| format!("Could not read MDX components {}", path.display()))?;
+    if source.contains("function normalizeImageDimension(") {
+        return Ok(());
+    }
+
+    const DEFAULT_IMPORT: &str = "import defaultMdxComponents from 'fumadocs-ui/mdx';";
+    const COMPONENTS_EXPORT: &str =
+        "export function getMDXComponents(components?: MDXComponents) {";
+    const COMPONENTS_SPREAD: &str = "    ...defaultMdxComponents,\n";
+    let Some(import_end) = source
+        .find(DEFAULT_IMPORT)
+        .map(|index| index + DEFAULT_IMPORT.len())
+    else {
+        return Ok(());
+    };
+    if !source.contains(COMPONENTS_EXPORT) {
+        return Ok(());
+    }
+    if !source.contains(COMPONENTS_SPREAD) {
+        return Ok(());
+    }
+
+    source.insert_str(import_end, "\nimport type { ComponentProps } from 'react';");
+    let export_start = source
+        .find(COMPONENTS_EXPORT)
+        .context("MDX components export disappeared during migration")?;
+    const IMAGE_HELPERS: &str = r#"const DefaultImage = defaultMdxComponents.img;
+
+function normalizeImageDimension(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+
+  const dimension = Number(value);
+  if (!Number.isFinite(dimension) || dimension <= 0) return undefined;
+
+  return Math.max(1, Math.round(dimension));
+}
+
+function MdxImage({ width, height, ...props }: ComponentProps<'img'>) {
+  return (
+    <DefaultImage
+      {...props}
+      width={normalizeImageDimension(width)}
+      height={normalizeImageDimension(height)}
+    />
+  );
+}
+
+"#;
+    source.insert_str(export_start, IMAGE_HELPERS);
+    source = source.replacen(
+        COMPONENTS_SPREAD,
+        "    ...defaultMdxComponents,\n    img: MdxImage,\n",
+        1,
+    );
+
+    fs::write(&path, source)
+        .with_context(|| format!("Could not update MDX components {}", path.display()))
 }
 
 fn upgrade_shiki_dependency(site_dir: &Path) -> Result<()> {

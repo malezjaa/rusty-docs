@@ -56,7 +56,12 @@ pub(super) fn write_package_pages(
         if page.relative_path == package_root.join("index.mdx") {
             continue;
         }
-        let mut markdown = rewrite_doc_link_groups(&page.markdown, &page.doc_links, &route_by_id);
+        let mut markdown = rewrite_doc_link_groups(
+            &page.markdown,
+            &page.doc_links,
+            &route_by_id,
+            workspace_routes,
+        );
         if page.kind == "module" {
             let module_dir = page.relative_path.parent().unwrap_or(Path::new("."));
             let children = api.pages.iter().filter(|candidate| {
@@ -90,30 +95,64 @@ fn add_local_member_routes(api: &ExtractedApi, route_by_id: &mut HashMap<String,
         if target.local_id.as_deref() != Some(id.as_str()) || route_by_id.contains_key(id) {
             continue;
         }
-        let (Some(rust_path), Some(kind)) = (target.rust_path.as_deref(), target.kind.as_deref())
-        else {
-            continue;
-        };
-        let Some((parent_path, name)) = rust_path.rsplit_once("::") else {
-            continue;
-        };
-        let Some(parent) = api.pages.iter().find(|page| page.rust_path == parent_path) else {
-            continue;
-        };
-        let route = util::page_route(&parent.relative_path);
-        let fragment = match (parent.kind.as_str(), kind) {
-            ("trait", "function" | "type_alias" | "constant") => util::slug(name),
-            ("enum", "variant") => util::slug(name),
-            ("struct" | "enum" | "union", "function" | "type_alias" | "constant" | "static") => {
-                let Ok(id) = id.parse::<u64>() else {
-                    continue;
-                };
-                member_anchor("member", name, id)
-            }
-            _ => continue,
-        };
-        route_by_id.insert(id.clone(), format!("{route}#{fragment}"));
+        if let Some(route) = local_member_route(api, id, target) {
+            route_by_id.insert(id.clone(), route);
+        }
     }
+}
+
+pub(super) fn add_workspace_routes(
+    api: &ExtractedApi,
+    workspace_routes: &mut HashMap<(String, String), String>,
+) {
+    let package_root = PathBuf::from("api")
+        .join(util::slug(&api.package.name))
+        .join("index.mdx");
+    workspace_routes.insert(
+        (api.crate_name.clone(), api.crate_name.clone()),
+        util::page_route(&package_root),
+    );
+    for page in &api.pages {
+        workspace_routes.insert(
+            (api.crate_name.clone(), page.rust_path.clone()),
+            util::page_route(&page.relative_path),
+        );
+    }
+    for (id, target) in &api.signature_targets {
+        if target.local_id.as_deref() != Some(id.as_str()) {
+            continue;
+        }
+        let Some(rust_path) = target.rust_path.as_deref() else {
+            continue;
+        };
+        if let Some(route) = local_member_route(api, id, target) {
+            workspace_routes.insert((api.crate_name.clone(), rust_path.to_owned()), route);
+        }
+    }
+}
+
+fn local_member_route(
+    api: &ExtractedApi,
+    id: &str,
+    target: &crate::rustdoc::SignatureLinkTarget,
+) -> Option<String> {
+    let (rust_path, kind) = (target.rust_path.as_deref()?, target.kind.as_deref()?);
+    let (parent_path, name) = rust_path.rsplit_once("::")?;
+    let parent = api
+        .pages
+        .iter()
+        .find(|page| page.rust_path == parent_path)?;
+    let route = util::page_route(&parent.relative_path);
+    let fragment = match (parent.kind.as_str(), kind) {
+        ("trait", "function" | "type_alias" | "constant") => util::slug(name),
+        ("enum", "variant") => util::slug(name),
+        ("struct" | "enum" | "union", "function" | "type_alias" | "constant" | "static") => {
+            let id = id.parse::<u64>().ok()?;
+            member_anchor("member", name, id)
+        }
+        _ => return None,
+    };
+    Some(format!("{route}#{fragment}"))
 }
 
 fn rewrite_signature_type_links(
@@ -247,7 +286,7 @@ fn grouped_api_items<'a>(
                         util::mdx_string(&page.kind),
                         util::mdx_string(&page.title),
                         util::mdx_string(&page.rust_path),
-                        page.description.as_str()
+                        mdx_text(&page.description)
                     )
                 })
                 .collect::<Vec<_>>()
@@ -301,6 +340,7 @@ fn rewrite_doc_link_groups(
     markdown: &str,
     groups: &[crate::rustdoc::DocLinkGroup],
     route_by_id: &HashMap<String, String>,
+    workspace_routes: &HashMap<(String, String), String>,
 ) -> String {
     let source = normalize_reference_link_destinations(markdown);
     let mut output = String::with_capacity(source.len());
@@ -317,7 +357,7 @@ fn rewrite_doc_link_groups(
         let end = start + chunk.len();
         output.push_str(&source[cursor..start]);
         let mut rewritten = chunk;
-        rewrite_link_tokens(&mut rewritten, &group.links, route_by_id);
+        rewrite_link_tokens(&mut rewritten, &group.links, route_by_id, workspace_routes);
         output.push_str(&rewritten);
         cursor = end;
     }
@@ -329,6 +369,7 @@ fn rewrite_link_tokens(
     output: &mut String,
     links: &[(String, crate::rustdoc::DocLinkTarget)],
     route_by_id: &HashMap<String, String>,
+    workspace_routes: &HashMap<(String, String), String>,
 ) {
     for (label, target) in links {
         let (route, external_kind) = match target {
@@ -338,8 +379,18 @@ fn rewrite_link_tokens(
                 };
                 (route.as_str(), None)
             }
-            crate::rustdoc::DocLinkTarget::Url { href, kind } => {
-                (href.as_str(), Some(kind.as_str()))
+            crate::rustdoc::DocLinkTarget::Url {
+                href,
+                kind,
+                crate_name,
+                rust_path,
+            } => {
+                if let Some(route) = workspace_routes.get(&(crate_name.clone(), rust_path.clone()))
+                {
+                    (route.as_str(), None)
+                } else {
+                    (href.as_str(), Some(kind.as_str()))
+                }
             }
         };
         *output = rewrite_named_reference_link_destinations(output, label, route, external_kind);
@@ -657,6 +708,20 @@ fn html_escape_text(value: &str) -> String {
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+fn mdx_text(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '{' => escaped.push_str("&#123;"),
+            '}' => escaped.push_str("&#125;"),
+            _ => escaped.push(character),
+        }
+    }
+    escaped
 }
 
 fn html_escape_attribute(value: &str) -> String {

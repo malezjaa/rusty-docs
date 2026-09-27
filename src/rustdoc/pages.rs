@@ -191,10 +191,17 @@ fn resolve_external_doc_links(
             let DocLinkTarget::Item(target_id) = target else {
                 continue;
             };
-            let Some((href, kind)) = external_rustdoc_url(target_id, paths, external_crates) else {
+            let Some((href, kind, crate_name, rust_path)) =
+                external_rustdoc_url(target_id, paths, external_crates)
+            else {
                 continue;
             };
-            *target = DocLinkTarget::Url { href, kind };
+            *target = DocLinkTarget::Url {
+                href,
+                kind,
+                crate_name,
+                rust_path,
+            };
         }
     }
 }
@@ -255,24 +262,8 @@ fn signature_link_targets(
     }
 
     for primitive in [
-        "bool",
-        "char",
-        "f32",
-        "f64",
-        "i8",
-        "i16",
-        "i32",
-        "i64",
-        "i128",
-        "isize",
-        "str",
-        "u8",
-        "u16",
-        "u32",
-        "u64",
-        "u128",
-        "usize",
-        "never",
+        "bool", "char", "f32", "f64", "i8", "i16", "i32", "i64", "i128", "isize", "str", "u8",
+        "u16", "u32", "u64", "u128", "usize", "never",
     ] {
         targets.insert(
             format!("primitive:{primitive}"),
@@ -342,7 +333,7 @@ fn external_rustdoc_url(
     id: &str,
     paths: &Map<String, Value>,
     external_crates: Option<&Map<String, Value>>,
-) -> Option<(String, String)> {
+) -> Option<(String, String, String, String)> {
     let item = paths.get(id)?;
     let crate_id = item.get("crate_id")?.as_u64()?;
     if crate_id == 0 {
@@ -366,25 +357,32 @@ fn external_rustdoc_url(
     let segments = path.iter().map(Value::as_str).collect::<Option<Vec<_>>>()?;
     let kind = item.get("kind")?.as_str()?;
     let item_name = segments.last()?;
+    let rust_path = segments.join("::");
 
     if kind == "module" {
         return Some((
             format!("{root_url}/{}/index.html", segments.join("/")),
             kind.to_owned(),
+            crate_name.to_owned(),
+            rust_path,
         ));
     }
     if kind == "primitive" {
-        let crate_name = segments.first()?;
+        let path_crate_name = segments.first()?;
         return Some((
-            format!("{root_url}/{crate_name}/primitive.{item_name}.html"),
+            format!("{root_url}/{path_crate_name}/primitive.{item_name}.html"),
             kind.to_owned(),
+            crate_name.to_owned(),
+            rust_path,
         ));
     }
     if kind == "keyword" {
-        let crate_name = segments.first()?;
+        let path_crate_name = segments.first()?;
         return Some((
-            format!("{root_url}/{crate_name}/keyword.{item_name}.html"),
+            format!("{root_url}/{path_crate_name}/keyword.{item_name}.html"),
             kind.to_owned(),
+            crate_name.to_owned(),
+            rust_path,
         ));
     }
 
@@ -413,13 +411,15 @@ fn external_rustdoc_url(
             if let Some(anchor_kind) = associated_item_anchor(kind) {
                 url.push_str(&format!("#{anchor_kind}.{item_name}"));
             }
-            return Some((url, kind.to_owned()));
+            return Some((url, kind.to_owned(), crate_name.to_owned(), rust_path));
         }
     }
 
     Some((
         item_page_url(&root_url, &segments, kind, item_name)?,
         kind.to_owned(),
+        crate_name.to_owned(),
+        rust_path,
     ))
 }
 

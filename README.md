@@ -40,6 +40,11 @@ packages start selected. Press Space to toggle a package, then Enter to
 continue. Use `--package` to document one named package or `--workspace` to
 include every library package without a prompt.
 
+Running rusty-docs from a workspace root opens this picker when the root is
+also a package. Links to selected workspace crates point to their pages in
+this site. Links to workspace crates you leave unselected keep their external
+rustdoc targets, such as docs.rs.
+
 The generated Next.js project lives in `docs-site/`. The static website is in
 `docs-site/out/`.
 
@@ -89,7 +94,7 @@ site keeps the default Fumadocs styles.
   constants, statics, unions, functions, macros, and named re-exports. It does
   not document private items or glob re-exports.
 - Some signatures omit generic bounds and `where` clauses. Macro signatures
-  use placeholders. External links and source-code links are not generated.
+  use placeholders. Source-code links are not generated.
 - Static export has no server runtime. Search uses the Fumadocs static client.
 
 ## License

@@ -101,13 +101,19 @@ pub fn select_packages(
         return find_package(&libraries, name);
     }
 
-    if let Some(path) = manifest_path
-        && let Some(package) = package_at_manifest(&libraries, path)
-    {
-        return Ok(vec![package]);
+    if let Some(path) = manifest_path {
+        if libraries.len() > 1 && is_workspace_manifest(metadata, path) {
+            return choose_interactively(&libraries);
+        }
+        if let Some(package) = package_at_manifest(&libraries, path) {
+            return Ok(vec![package]);
+        }
     }
 
     let current_dir = std::env::current_dir().context("Could not read the current directory")?;
+    if libraries.len() > 1 && normalize(&current_dir) == normalize(&metadata.workspace_root) {
+        return choose_interactively(&libraries);
+    }
     if let Some(package) = deepest_package_for_dir(&libraries, &current_dir) {
         return Ok(vec![package]);
     }
@@ -154,6 +160,10 @@ fn package_at_manifest(packages: &[Package], path: &Path) -> Option<Package> {
         .iter()
         .find(|package| normalize(&package.manifest_path) == manifest)
         .cloned()
+}
+
+fn is_workspace_manifest(metadata: &CargoMetadata, path: &Path) -> bool {
+    normalize(path) == normalize(&metadata.workspace_root.join("Cargo.toml"))
 }
 
 fn deepest_package_for_dir(packages: &[Package], dir: &Path) -> Option<Package> {

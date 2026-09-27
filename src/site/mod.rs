@@ -138,17 +138,10 @@ pub fn generate_and_build(
     stage.finish("Wrote site metadata and synced guides");
 
     let api_page_count = packages.iter().map(|api| api.pages.len()).sum::<usize>();
-    let workspace_routes = packages
-        .iter()
-        .flat_map(|api| {
-            api.pages.iter().map(|page| {
-                (
-                    (api.crate_name.clone(), page.rust_path.clone()),
-                    util::page_route(&page.relative_path),
-                )
-            })
-        })
-        .collect::<std::collections::HashMap<_, _>>();
+    let mut workspace_routes = std::collections::HashMap::new();
+    for api in packages {
+        api_pages::add_workspace_routes(api, &mut workspace_routes);
+    }
     let progress = terminal.progress(api_page_count as u64, "Generating API pages");
     for api in packages {
         api_pages::write_package_pages(&content_target, api, &workspace_routes, progress.as_ref())?;

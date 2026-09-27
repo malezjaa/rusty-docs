@@ -107,16 +107,19 @@ html[data-theme="dark"] {
 }
 
 .api-item-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    min-width: 0;
+    display: inline;
+    --api-item-icon-gap: 0.5rem;
     color: var(--api-kind-color, inherit);
-    vertical-align: middle;
+    vertical-align: baseline;
 }
 
 .api-item-label--compact {
-    gap: 0.35rem;
+    --api-item-icon-gap: 0.35rem;
+}
+
+.api-item-label .api-kind-icon {
+    margin-inline-end: var(--api-item-icon-gap);
+    vertical-align: middle;
 }
 
 .api-kind-icon {
@@ -146,10 +149,7 @@ html[data-theme="dark"] {
 }
 
 .api-item-link {
-    display: inline-flex;
-    align-items: center;
-    max-width: 100%;
-    vertical-align: middle;
+    display: inline;
     font-weight: 550;
     color: var(--api-kind-color, inherit);
     text-decoration: none;

@@ -47,7 +47,12 @@ pub struct ApiTocItem {
 #[derive(Clone, Debug)]
 pub enum DocLinkTarget {
     Item(String),
-    Url { href: String, kind: String },
+    Url {
+        href: String,
+        kind: String,
+        crate_name: String,
+        rust_path: String,
+    },
 }
 
 pub(crate) fn member_anchor(kind: &str, name: &str, id: u64) -> String {
