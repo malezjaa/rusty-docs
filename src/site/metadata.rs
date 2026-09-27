@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
 };
@@ -6,9 +7,9 @@ use std::{
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 
-use crate::rustdoc::ExtractedApi;
+use crate::rustdoc::ExtractedTarget;
 
-pub(super) fn docs_index(title: &str, description: &str, packages: &[ExtractedApi]) -> String {
+pub(super) fn docs_index(title: &str, description: &str, targets: &[ExtractedTarget]) -> String {
     let mut output = format!(
         "---\ntitle: {}\ndescription: {}\n---\n\n# {}\n\n{}\n\n",
         yaml_quote("Overview"),
@@ -16,26 +17,54 @@ pub(super) fn docs_index(title: &str, description: &str, packages: &[ExtractedAp
         title,
         description
     );
-    output.push_str("## API reference\n\n");
-    for api in packages {
+    let libraries = targets
+        .iter()
+        .filter(|target| target.target_kind.is_library())
+        .collect::<Vec<_>>();
+    if !libraries.is_empty() {
+        output.push_str("## Library APIs\n\n");
+    }
+    for api in libraries {
         output.push_str(&format!(
             "- [`{}` v{}](/docs/api/{})\n",
             api.package.name,
             api.package.version,
             super::util::slug(&api.package.name)
+        ));
+    }
+    let binaries = targets
+        .iter()
+        .filter(|target| target.target_kind.is_binary())
+        .collect::<Vec<_>>();
+    if !binaries.is_empty() {
+        output.push_str("\n## Binary source references\n\n");
+    }
+    for target in binaries {
+        output.push_str(&format!(
+            "- [`{}` from `{}`]({})\n",
+            target.target_name,
+            target.package.name,
+            super::util::page_route(&target.route_root.join("index.mdx"))
         ));
     }
     output.push_str("\nAdditional documentation pages are available in the sidebar.\n");
     output
 }
 
-pub(super) fn api_index(packages: &[ExtractedApi]) -> String {
+pub(super) fn api_index(targets: &[ExtractedTarget]) -> String {
     let mut output = format!(
-        "---\ntitle: {}\ndescription: {}\n---\n\n# API reference\n\n",
-        yaml_quote("API reference"),
+        "---\ntitle: {}\ndescription: {}\n---\n\n# API\n\n",
+        yaml_quote("API"),
         yaml_quote("Generated documentation for public Rust APIs.")
     );
-    for api in packages {
+    let libraries = targets
+        .iter()
+        .filter(|target| target.target_kind.is_library())
+        .collect::<Vec<_>>();
+    if !libraries.is_empty() {
+        output.push_str("## Library APIs\n\n");
+    }
+    for api in libraries {
         output.push_str(&format!(
             "- [`{}` v{}](/docs/api/{})\n",
             api.package.name,
@@ -46,24 +75,38 @@ pub(super) fn api_index(packages: &[ExtractedApi]) -> String {
     output
 }
 
-pub(super) fn site_description(packages: &[ExtractedApi]) -> String {
-    if packages.len() == 1 {
-        return packages[0].package.description.clone().unwrap_or_else(|| {
-            format!(
-                "API reference and additional documentation for {}.",
-                packages[0].package.name
-            )
-        });
+pub(super) fn site_description(targets: &[ExtractedTarget]) -> String {
+    let mut package_ids = HashSet::new();
+    let unique_packages = targets
+        .iter()
+        .filter(|target| package_ids.insert(target.package.id.as_str()))
+        .collect::<Vec<_>>();
+    if unique_packages.len() == 1 {
+        return unique_packages[0]
+            .package
+            .description
+            .clone()
+            .unwrap_or_else(|| {
+                format!(
+                    "Rust documentation for {}.",
+                    unique_packages[0].package.name
+                )
+            });
     }
     format!(
-        "API reference and additional documentation for {} Rust packages.",
-        packages.len()
+        "Rust API and binary documentation for {} packages.",
+        unique_packages.len()
     )
 }
 
-pub(super) fn default_title(packages: &[ExtractedApi]) -> String {
-    if packages.len() == 1 {
-        packages[0].package.name.clone()
+pub(super) fn default_title(targets: &[ExtractedTarget]) -> String {
+    let mut package_ids = HashSet::new();
+    let unique_packages = targets
+        .iter()
+        .filter(|target| package_ids.insert(target.package.id.as_str()))
+        .collect::<Vec<_>>();
+    if unique_packages.len() == 1 {
+        unique_packages[0].package.name.clone()
     } else {
         "Rust documentation".to_owned()
     }

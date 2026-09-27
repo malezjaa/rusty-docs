@@ -32,7 +32,10 @@ function markApiItems(tree: PageTree.Root): PageTree.Root {
     siteConfig.contentPosition === 'start'
       ? [...(contentSection ? [contentSection] : []), ...otherNodes]
       : [...otherNodes, ...(contentSection ? [contentSection] : [])];
-  return { ...tree, children: children.map(markApiItemNode) };
+  return {
+    ...tree,
+    children: children.map((node) => markApiItemNode(node, true)),
+  };
 }
 
 function isContentSection(node: PageTreeItem): boolean {
@@ -61,10 +64,28 @@ function isContentUrl(url: string): boolean {
 
 function markApiItemNodes(nodes: PageTreeItem[]): PageTreeItem[] {
   const sorted = sortApiItems(nodes);
-  return sorted.map((node) => markApiItemNode(node));
+  return sorted.flatMap((node) => {
+    const child = singleBinaryChild(node);
+    return [markApiItemNode(child ?? node)];
+  });
 }
 
-function markApiItemNode(node: PageTreeItem): PageTreeItem {
+function singleBinaryChild(node: PageTreeItem): PageTreeItem | undefined {
+  if (node.type !== 'folder' || node.index || node.children.length !== 1) {
+    return undefined;
+  }
+
+  const child = node.children[0];
+  const url =
+    child.type === 'page'
+      ? child.url
+      : child.type === 'folder'
+        ? child.index?.url
+        : undefined;
+  return url && apiKindForUrl(url) === 'binary' ? child : undefined;
+}
+
+function markApiItemNode(node: PageTreeItem, topLevel = false): PageTreeItem {
   if (node.type === 'page') {
     return markApiItemPage(node);
   }
@@ -74,7 +95,8 @@ function markApiItemNode(node: PageTreeItem): PageTreeItem {
     if (node.index && indexKind && children.length === 0) {
       return markApiItemPage({ ...node.index, type: 'page', name: node.name });
     }
-    const folderKind = indexKind ?? (children.some(hasApiItem) ? 'module' : undefined);
+    const folderKind =
+      indexKind ?? (!topLevel && children.some(hasApiItem) ? 'module' : undefined);
     return {
       ...node,
       ...(folderKind
@@ -108,6 +130,7 @@ function hasApiItem(node: PageTreeItem): boolean {
 
 const apiKindOrder = [
   'crate',
+  'binary',
   'module',
   'struct',
   'enum',

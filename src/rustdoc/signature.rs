@@ -129,10 +129,16 @@ pub(super) fn signature(
                 .and_then(|value| value.get("type"))
                 .map(type_name)
                 .unwrap_or_else(|| "_".to_owned());
-            let value = data
-                .and_then(|value| value.get("const"))
-                .and_then(|value| value.get("value"))
+            // rustdoc evaluates numeric constants only. Keep the expression for other types.
+            let constant = data.and_then(|value| value.get("const"));
+            let value = constant
+                .and_then(|constant| constant.get("value"))
                 .and_then(Value::as_str)
+                .or_else(|| {
+                    constant
+                        .and_then(|constant| constant.get("expr"))
+                        .and_then(Value::as_str)
+                })
                 .unwrap_or("…");
             format!("{public}const {name}: {ty} = {value};")
         }

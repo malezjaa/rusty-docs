@@ -19,15 +19,36 @@ const crateRoutes = new Set(
 );
 
 function markApiItems(tree: PageTree.Root): PageTree.Root {
-  return { ...tree, children: markApiItemNodes(tree.children) };
+  return {
+    ...tree,
+    children: sortApiItems(tree.children).map((node) => markApiItemNode(node, true)),
+  };
 }
 
 function markApiItemNodes(nodes: PageTreeItem[]): PageTreeItem[] {
   const sorted = sortApiItems(nodes);
-  return sorted.map((node) => markApiItemNode(node));
+  return sorted.flatMap((node) => {
+    const child = singleBinaryChild(node);
+    return [markApiItemNode(child ?? node)];
+  });
 }
 
-function markApiItemNode(node: PageTreeItem): PageTreeItem {
+function singleBinaryChild(node: PageTreeItem): PageTreeItem | undefined {
+  if (node.type !== 'folder' || node.index || node.children.length !== 1) {
+    return undefined;
+  }
+
+  const child = node.children[0];
+  const url =
+    child.type === 'page'
+      ? child.url
+      : child.type === 'folder'
+        ? child.index?.url
+        : undefined;
+  return url && apiKindForUrl(url) === 'binary' ? child : undefined;
+}
+
+function markApiItemNode(node: PageTreeItem, topLevel = false): PageTreeItem {
   if (node.type === 'page') {
     return markApiItemPage(node);
   }
@@ -37,7 +58,8 @@ function markApiItemNode(node: PageTreeItem): PageTreeItem {
     if (node.index && indexKind && children.length === 0) {
       return markApiItemPage({ ...node.index, type: 'page', name: node.name });
     }
-    const folderKind = indexKind ?? (children.some(hasApiItem) ? 'module' : undefined);
+    const folderKind =
+      indexKind ?? (!topLevel && children.some(hasApiItem) ? 'module' : undefined);
     return {
       ...node,
       ...(folderKind
@@ -89,6 +111,7 @@ function normalizeApiPageUrl(url: string) {
 
 const apiKindOrder = [
   'crate',
+  'binary',
   'module',
   'struct',
   'enum',
@@ -125,7 +148,25 @@ function apiNodeKind(node: PageTreeItem) {
     const ITEM_NODES_HELPER: &str = r#"
 
 function markApiItemNodes(nodes: PageTreeItem[]): PageTreeItem[] {
-  return sortApiItems(nodes).map((node) => markApiItemNode(node));
+  return sortApiItems(nodes).flatMap((node) => {
+    const child = singleBinaryChild(node);
+    return [markApiItemNode(child ?? node)];
+  });
+}
+
+function singleBinaryChild(node: PageTreeItem): PageTreeItem | undefined {
+  if (node.type !== 'folder' || node.index || node.children.length !== 1) {
+    return undefined;
+  }
+
+  const child = node.children[0];
+  const url =
+    child.type === 'page'
+      ? child.url
+      : child.type === 'folder'
+        ? child.index?.url
+        : undefined;
+  return url && apiKindForUrl(url) === 'binary' ? child : undefined;
 }
 "#;
     const API_FOLDER_HELPER: &str = r#"if (node.type === 'folder') {
@@ -134,7 +175,8 @@ function markApiItemNodes(nodes: PageTreeItem[]): PageTreeItem[] {
     if (node.index && indexKind && children.length === 0) {
       return markApiItemPage({ ...node.index, type: 'page', name: node.name });
     }
-    const folderKind = indexKind ?? (children.some(hasApiItem) ? 'module' : undefined);
+    const folderKind =
+      indexKind ?? (!topLevel && children.some(hasApiItem) ? 'module' : undefined);
     return {
       ...node,
       ...(folderKind
@@ -153,6 +195,20 @@ function markApiItemNodes(nodes: PageTreeItem[]): PageTreeItem[] {
         .with_context(|| format!("Could not read layout {}", path.display()))?;
     if source.contains("markApiItems") {
         let original = source.clone();
+        source = source.replace(
+            "const folderKind = indexKind ?? (children.some(hasApiItem) ? 'module' : undefined);",
+            "const folderKind =\n      indexKind ?? (!topLevel && children.some(hasApiItem) ? 'module' : undefined);",
+        );
+        source = source.replace(
+            "const folderKind = indexKind;",
+            "const folderKind =\n      indexKind ?? (!topLevel && children.some(hasApiItem) ? 'module' : undefined);",
+        );
+        if !source.contains("  'binary',") {
+            source = source.replace(
+                "const apiKindOrder = [\n  'crate',\n",
+                "const apiKindOrder = [\n  'crate',\n  'binary',\n",
+            );
+        }
         const LEGACY_INDEX_MAPPING: &str = "index: markApiItemNode(node.index)";
         const CURRENT_INDEX_MAPPING: &str = "index: markApiItemPage(node.index)";
         const PAGE_HELPER: &str = r#"
@@ -230,6 +286,14 @@ const crateRoutes = new Set(
             "children: markApiItemNodes(tree.children)",
         );
         source = source.replace(
+            "return { ...tree, children: markApiItemNodes(tree.children) };",
+            "return {\n    ...tree,\n    children: sortApiItems(tree.children).map((node) => markApiItemNode(node, true)),\n  };",
+        );
+        source = source.replace(
+            "children: children.map(markApiItemNode),",
+            "children: children.map((node) => markApiItemNode(node, true)),",
+        );
+        source = source.replace(
             "const children = sortApiItems(node.children.map(markApiItemNode));",
             "const children = markApiItemNodes(node.children);",
         );
@@ -244,10 +308,11 @@ const crateRoutes = new Set(
         const CURRENT_FOLDER_HELPER: &str = r#"if (node.type === 'folder') {
     const indexKind = node.index ? apiKindForUrl(node.index.url) : undefined;
     const children = markApiItemNodes(node.children);
+    const folderKind = indexKind;
     return {
       ...node,
-      ...(indexKind
-        ? { name: <ApiItemLabel compact kind={indexKind} name={node.name} /> }
+      ...(folderKind
+        ? { name: <ApiItemLabel compact kind={folderKind} name={node.name} /> }
         : {}),
       ...(node.index ? { index: markApiItemPage(node.index) } : {}),
       children,
@@ -278,7 +343,11 @@ const crateRoutes = new Set(
         source = source.replace(GROUPED_FOLDER_HELPER, API_FOLDER_HELPER);
         source = source.replace(
             "function markApiItemNode(node: PageTreeItem, groupStart: boolean): PageTreeItem {",
+            "function markApiItemNode(node: PageTreeItem, topLevel = false): PageTreeItem {",
+        );
+        source = source.replace(
             "function markApiItemNode(node: PageTreeItem): PageTreeItem {",
+            "function markApiItemNode(node: PageTreeItem, topLevel = false): PageTreeItem {",
         );
         source = source.replace(
             "return markApiItemPage(node, groupStart);",
@@ -304,9 +373,12 @@ const crateRoutes = new Set(
             OLD_GROUPED_ITEMS,
             "function markApiItemNodes(nodes: PageTreeItem[]): PageTreeItem[] {\n  return sortApiItems(nodes).map((node) => markApiItemNode(node));\n}",
         );
-        if !source.contains("function hasApiItem(") {
-            source.push_str(
-                r#"
+        const SIMPLE_ITEM_NODES_HELPER: &str = r#"function markApiItemNodes(nodes: PageTreeItem[]): PageTreeItem[] {
+  return sortApiItems(nodes).map((node) => markApiItemNode(node));
+}"#;
+        let flattened_helper = ITEM_NODES_HELPER.trim();
+        source = source.replace(SIMPLE_ITEM_NODES_HELPER, flattened_helper);
+        const HAS_API_ITEM_HELPER: &str = r#"
 
 function hasApiItem(node: PageTreeItem): boolean {
   if (node.type === 'page') return apiKindForUrl(node.url) !== undefined;
@@ -317,6 +389,28 @@ function hasApiItem(node: PageTreeItem): boolean {
     );
   }
   return false;
+}
+"#;
+        if !source.contains("function hasApiItem(") {
+            source.push_str(HAS_API_ITEM_HELPER);
+        }
+        if !source.contains("function singleBinaryChild(") {
+            source.push_str(
+                r#"
+
+function singleBinaryChild(node: PageTreeItem): PageTreeItem | undefined {
+  if (node.type !== 'folder' || node.index || node.children.length !== 1) {
+    return undefined;
+  }
+
+  const child = node.children[0];
+  const url =
+    child.type === 'page'
+      ? child.url
+      : child.type === 'folder'
+        ? child.index?.url
+        : undefined;
+  return url && apiKindForUrl(url) === 'binary' ? child : undefined;
 }
 "#,
             );
@@ -372,7 +466,10 @@ function hasApiItem(node: PageTreeItem): boolean {
 
 pub(super) fn upgrade_content_sidebar_position(site_dir: &Path) -> Result<()> {
     const OLD_ROOT: &str = r#"function markApiItems(tree: PageTree.Root): PageTree.Root {
-  return { ...tree, children: markApiItemNodes(tree.children) };
+  return {
+    ...tree,
+    children: sortApiItems(tree.children).map((node) => markApiItemNode(node, true)),
+  };
 }"#;
     const NEW_ROOT: &str = r#"function markApiItems(tree: PageTree.Root): PageTree.Root {
   const nodes = sortApiItems(tree.children);
@@ -382,7 +479,10 @@ pub(super) fn upgrade_content_sidebar_position(site_dir: &Path) -> Result<()> {
     siteConfig.contentPosition === 'start'
       ? [...(contentSection ? [contentSection] : []), ...otherNodes]
       : [...otherNodes, ...(contentSection ? [contentSection] : [])];
-  return { ...tree, children: children.map(markApiItemNode) };
+  return {
+    ...tree,
+    children: children.map((node) => markApiItemNode(node, true)),
+  };
 }
 
 function isContentSection(node: PageTreeItem): boolean {

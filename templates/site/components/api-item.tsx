@@ -17,6 +17,7 @@ import {
   Rows3,
   Shapes,
   SquareFunction,
+  Terminal,
   Type,
   Workflow,
   type LucideIcon,
@@ -28,6 +29,7 @@ import { ApiMemberPermalink } from "./api-member-permalink";
 
 const itemKinds: Record<string, { label: string; icon: LucideIcon }> = {
   crate: { label: "Crate", icon: Package },
+  binary: { label: "Binary", icon: Terminal },
   module: { label: "Module", icon: Folder },
   struct: { label: "Struct", icon: Box },
   enum: { label: "Enum", icon: List },

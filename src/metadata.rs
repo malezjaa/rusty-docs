@@ -38,16 +38,43 @@ pub struct Target {
     pub kind: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TargetKind {
+    Library,
+    Binary,
+}
+
+impl TargetKind {
+    pub fn is_library(self) -> bool {
+        self == Self::Library
+    }
+
+    pub fn is_binary(self) -> bool {
+        self == Self::Binary
+    }
+}
+
 impl Package {
-    pub fn library_target(&self) -> Option<&Target> {
-        self.targets.iter().find(|target| {
-            target.kind.iter().any(|kind| {
+    pub fn documentable_targets(&self) -> impl Iterator<Item = (&Target, TargetKind)> {
+        self.targets.iter().filter_map(|target| {
+            let kind = if target.kind.iter().any(|kind| kind == "bin") {
+                TargetKind::Binary
+            } else if target.kind.iter().any(|kind| {
                 matches!(
                     kind.as_str(),
                     "lib" | "rlib" | "dylib" | "cdylib" | "staticlib" | "proc-macro"
                 )
-            })
+            }) {
+                TargetKind::Library
+            } else {
+                return None;
+            };
+            Some((target, kind))
         })
+    }
+
+    pub fn has_documentable_targets(&self) -> bool {
+        self.documentable_targets().next().is_some()
     }
 
     pub fn root(&self) -> &Path {
@@ -83,38 +110,38 @@ pub fn select_packages(
     manifest_path: Option<&Path>,
 ) -> Result<Vec<Package>> {
     let members = metadata.workspace_members.iter().collect::<HashSet<_>>();
-    let libraries = metadata
+    let packages = metadata
         .packages
         .iter()
-        .filter(|package| members.contains(&package.id) && package.library_target().is_some())
+        .filter(|package| members.contains(&package.id) && package.has_documentable_targets())
         .cloned()
         .collect::<Vec<_>>();
 
     if all_workspace {
-        if libraries.is_empty() {
-            bail!("This Cargo workspace has no library packages to document.");
+        if packages.is_empty() {
+            bail!("This Cargo workspace has no library or binary targets to document.");
         }
-        return Ok(libraries);
+        return Ok(packages);
     }
 
     if let Some(name) = requested.or(configured) {
-        return find_package(&libraries, name);
+        return find_package(&packages, name);
     }
 
     if let Some(path) = manifest_path {
-        if libraries.len() > 1 && is_workspace_manifest(metadata, path) {
-            return choose_interactively(&libraries);
+        if packages.len() > 1 && is_workspace_manifest(metadata, path) {
+            return choose_interactively(&packages);
         }
-        if let Some(package) = package_at_manifest(&libraries, path) {
+        if let Some(package) = package_at_manifest(&packages, path) {
             return Ok(vec![package]);
         }
     }
 
     let current_dir = std::env::current_dir().context("Could not read the current directory")?;
-    if libraries.len() > 1 && normalize(&current_dir) == normalize(&metadata.workspace_root) {
-        return choose_interactively(&libraries);
+    if packages.len() > 1 && normalize(&current_dir) == normalize(&metadata.workspace_root) {
+        return choose_interactively(&packages);
     }
-    if let Some(package) = deepest_package_for_dir(&libraries, &current_dir) {
+    if let Some(package) = deepest_package_for_dir(&packages, &current_dir) {
         return Ok(vec![package]);
     }
 
@@ -122,22 +149,22 @@ pub fn select_packages(
         .workspace_default_members
         .iter()
         .collect::<HashSet<_>>();
-    let default_libraries = libraries
+    let default_packages = packages
         .iter()
         .filter(|package| defaults.contains(&package.id))
         .cloned()
         .collect::<Vec<_>>();
-    if default_libraries.len() == 1 {
-        return Ok(default_libraries);
+    if default_packages.len() == 1 {
+        return Ok(default_packages);
     }
-    if libraries.len() == 1 {
-        return Ok(libraries);
+    if packages.len() == 1 {
+        return Ok(packages);
     }
-    if libraries.is_empty() {
-        bail!("No library packages were found in this Cargo workspace.");
+    if packages.is_empty() {
+        bail!("No library or binary targets were found in this Cargo workspace.");
     }
 
-    choose_interactively(&libraries)
+    choose_interactively(&packages)
 }
 
 fn find_package(packages: &[Package], name: &str) -> Result<Vec<Package>> {
@@ -149,7 +176,9 @@ fn find_package(packages: &[Package], name: &str) -> Result<Vec<Package>> {
                 .map(|package| package.name.as_str())
                 .collect::<Vec<_>>()
                 .join(", ");
-            bail!("No library package named '{name}' was found. Available packages: {choices}");
+            bail!(
+                "No package with library or binary targets named '{name}' was found. Available packages: {choices}"
+            );
         }
     }
 }
@@ -187,7 +216,7 @@ fn choose_interactively(packages: &[Package]) -> Result<Vec<Package>> {
             .collect::<Vec<_>>()
             .join(", ");
         bail!(
-            "More than one library package is available. Choose one with --package, or use --workspace. Available packages: {choices}"
+            "More than one documentable package is available. Choose one with --package, or use --workspace. Available packages: {choices}"
         );
     }
 
@@ -197,7 +226,7 @@ fn choose_interactively(packages: &[Package]) -> Result<Vec<Package>> {
         .collect::<Vec<_>>();
     let defaults = vec![true; choices.len()];
     let selections = MultiSelect::new()
-        .with_prompt("Select library packages to document")
+        .with_prompt("Select packages to document")
         .items(&choices)
         .defaults(&defaults)
         .interact_opt()

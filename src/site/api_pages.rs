@@ -1,29 +1,43 @@
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-};
+use std::{collections::HashMap, path::Path};
 
 use anyhow::Result;
 use indicatif::ProgressBar;
 
-use crate::rustdoc::{ExtractedApi, member_anchor};
+use crate::rustdoc::{ExtractedTarget, member_anchor};
 
 use super::{metadata, util};
 
-pub(super) fn write_package_pages(
+pub(super) fn write_target_pages(
     content_root: &Path,
-    api: &ExtractedApi,
+    api: &ExtractedTarget,
     workspace_routes: &HashMap<(String, String), String>,
     progress: Option<&ProgressBar>,
 ) -> Result<()> {
-    let crate_slug = util::slug(&api.package.name);
-    let package_root = PathBuf::from("api").join(&crate_slug);
-    let description = api
-        .package
-        .description
-        .as_deref()
-        .unwrap_or("Public Rust API reference.");
-    let title = format!("{} v{}", api.package.name, api.package.version);
+    let target_root = api.route_root.clone();
+    let (title, description, overview_heading, item_heading, item_scope) =
+        if api.target_kind.is_library() {
+            (
+                format!("{} v{}", api.package.name, api.package.version),
+                api.package
+                    .description
+                    .clone()
+                    .unwrap_or_else(|| "Public Rust API reference.".to_owned()),
+                format!("# `{}`", api.package.name),
+                "Public items",
+                "public API",
+            )
+        } else {
+            (
+                format!("{} binary", api.target_name),
+                format!(
+                    "Source reference for the `{}` binary in package `{}`.",
+                    api.target_name, api.package.name
+                ),
+                format!("# `{}`", api.target_name),
+                "Items",
+                "documented item",
+            )
+        };
     let mut route_by_id = api
         .pages
         .iter()
@@ -38,22 +52,25 @@ pub(super) fn write_package_pages(
     add_local_member_routes(api, &mut route_by_id);
     let api_items = grouped_api_items(&api.pages, 3);
     let overview = format!(
-        "---\ntitle: {}\ndescription: {}\n---\n\n# `{}`\n\n{}\n\nThis reference contains {} public API pages.\n\n## Public items\n\n{}",
+        "---\ntitle: {}\ndescription: {}\n---\n\n{}\n\n{}\n\nThis reference contains {} {item_scope} pages.\n\n## {item_heading}\n\n{}",
         metadata::yaml_quote(&title),
-        metadata::yaml_quote(description),
-        api.package.name,
+        metadata::yaml_quote(&description),
+        overview_heading,
         description,
         api.pages.len(),
         api_items
     );
     metadata::write_markdown(
-        &content_root.join(&package_root).join("index.mdx"),
+        &content_root.join(&target_root).join("index.mdx"),
         &add_api_component_imports(&overview),
     )?;
+    if let Some(progress) = progress {
+        progress.inc(1);
+    }
 
     for page in &api.pages {
         let path = content_root.join(&page.relative_path);
-        if page.relative_path == package_root.join("index.mdx") {
+        if page.relative_path == target_root.join("index.mdx") {
             continue;
         }
         let mut markdown = rewrite_doc_link_groups(
@@ -77,7 +94,12 @@ pub(super) fn write_package_pages(
             });
             let items = grouped_api_items(children, 3);
             if !items.is_empty() {
-                markdown.push_str("\n## Public items\n\n");
+                let heading = if api.target_kind.is_library() {
+                    "Public items"
+                } else {
+                    "Items"
+                };
+                markdown.push_str(&format!("\n## {heading}\n\n"));
                 markdown.push_str(&items);
             }
         }
@@ -90,7 +112,7 @@ pub(super) fn write_package_pages(
     Ok(())
 }
 
-fn add_local_member_routes(api: &ExtractedApi, route_by_id: &mut HashMap<String, String>) {
+fn add_local_member_routes(api: &ExtractedTarget, route_by_id: &mut HashMap<String, String>) {
     for (id, target) in &api.signature_targets {
         if target.local_id.as_deref() != Some(id.as_str()) || route_by_id.contains_key(id) {
             continue;
@@ -102,12 +124,14 @@ fn add_local_member_routes(api: &ExtractedApi, route_by_id: &mut HashMap<String,
 }
 
 pub(super) fn add_workspace_routes(
-    api: &ExtractedApi,
+    api: &ExtractedTarget,
     workspace_routes: &mut HashMap<(String, String), String>,
 ) {
-    let package_root = PathBuf::from("api")
-        .join(util::slug(&api.package.name))
-        .join("index.mdx");
+    if !api.target_kind.is_library() {
+        return;
+    }
+
+    let package_root = api.route_root.join("index.mdx");
     workspace_routes.insert(
         (api.crate_name.clone(), api.crate_name.clone()),
         util::page_route(&package_root),
@@ -132,7 +156,7 @@ pub(super) fn add_workspace_routes(
 }
 
 fn local_member_route(
-    api: &ExtractedApi,
+    api: &ExtractedTarget,
     id: &str,
     target: &crate::rustdoc::SignatureLinkTarget,
 ) -> Option<String> {
@@ -157,7 +181,7 @@ fn local_member_route(
 
 fn rewrite_signature_type_links(
     markdown: &mut String,
-    api: &ExtractedApi,
+    api: &ExtractedTarget,
     route_by_id: &HashMap<String, String>,
     workspace_routes: &HashMap<(String, String), String>,
 ) {

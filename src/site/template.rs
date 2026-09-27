@@ -332,6 +332,9 @@ fn upgrade_api_item_component(site_dir: &Path) -> Result<()> {
     let original = source.clone();
 
     if source.contains("from \"lucide-react\"") {
+        if !source.contains("  Terminal,") {
+            source = source.replace("  Type,\n", "  Type,\n  Terminal,\n");
+        }
         if !source.contains("  Package,") {
             source = source.replace(
                 "  Layers,\n",
@@ -350,6 +353,12 @@ fn upgrade_api_item_component(site_dir: &Path) -> Result<()> {
             source = source.replace(
                 "const itemKinds: Record<string, { label: string; icon: LucideIcon }> = {\n",
                 "const itemKinds: Record<string, { label: string; icon: LucideIcon }> = {\n  crate: { label: \"Crate\", icon: Package },\n",
+            );
+        }
+        if !source.contains("binary: { label: \"Binary\"") {
+            source = source.replace(
+                "  crate: { label: \"Crate\", icon: Package },\n",
+                "  crate: { label: \"Crate\", icon: Package },\n  binary: { label: \"Binary\", icon: Terminal },\n",
             );
         }
         if !source.contains("icon: Circle },") {

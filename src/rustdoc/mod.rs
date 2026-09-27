@@ -13,7 +13,10 @@ use std::{
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
-use crate::{metadata::Package, terminal::Terminal};
+use crate::{
+    metadata::{Package, TargetKind},
+    terminal::Terminal,
+};
 
 #[derive(Clone, Debug)]
 pub struct ApiPage {
@@ -74,8 +77,11 @@ pub(crate) fn member_anchor(kind: &str, name: &str, id: u64) -> String {
 }
 
 #[derive(Debug)]
-pub struct ExtractedApi {
+pub struct ExtractedTarget {
     pub package: Package,
+    pub target_kind: TargetKind,
+    pub target_name: String,
+    pub route_root: PathBuf,
     pub crate_name: String,
     pub pages: Vec<ApiPage>,
     pub signature_targets: HashMap<String, SignatureLinkTarget>,
@@ -92,6 +98,7 @@ pub struct SignatureLinkTarget {
 
 pub struct ExtractOptions<'a> {
     pub target_name: &'a str,
+    pub target_kind: TargetKind,
     pub target_directory: &'a Path,
     pub toolchain: &'a str,
     pub features: &'a [String],
@@ -103,22 +110,38 @@ pub fn extract(
     package: &Package,
     options: ExtractOptions<'_>,
     terminal: &Terminal,
-) -> Result<ExtractedApi> {
+) -> Result<ExtractedTarget> {
     let ExtractOptions {
         target_name,
+        target_kind,
         target_directory,
         toolchain,
         features,
         all_features,
         no_default_features,
     } = options;
-    let stage = terminal.stage(format!("Extracting {} API", package.name));
+    let target_label = match target_kind {
+        TargetKind::Library => "library",
+        TargetKind::Binary => "binary",
+    };
+    let stage = terminal.stage(format!(
+        "Extracting {target_label} target '{}' from {}",
+        target_name, package.name
+    ));
     let mut command = Command::new("cargo");
     command
         .arg(format!("+{toolchain}"))
         .args(["rustdoc", "--manifest-path"])
         .arg(&package.manifest_path)
-        .args(["--package", &package.name, "--lib"]);
+        .args(["--package", &package.name]);
+    match target_kind {
+        TargetKind::Library => {
+            command.arg("--lib");
+        }
+        TargetKind::Binary => {
+            command.args(["--bin", target_name]);
+        }
+    }
     if no_default_features {
         command.arg("--no-default-features");
     }
@@ -128,6 +151,9 @@ pub fn extract(
         command.arg("--features").arg(features.join(","));
     }
     command.args(["--", "-Z", "unstable-options", "--output-format", "json"]);
+    if target_kind == TargetKind::Binary {
+        command.arg("--document-private-items");
+    }
     if terminal.is_color_enabled() {
         if std::env::var_os("FORCE_COLOR").is_none() {
             command.env("FORCE_COLOR", "1");
@@ -149,7 +175,8 @@ pub fn extract(
             stderr.trim()
         };
         bail!(
-            "rustdoc failed for package '{}'. Rustdoc JSON needs a nightly toolchain.\n{}",
+            "rustdoc failed for {target_label} target '{}' in package '{}'. Rustdoc JSON needs a nightly toolchain.\n{}",
+            target_name,
             package.name,
             details
         );
@@ -177,15 +204,22 @@ pub fn extract(
     })?;
     let json: Value = serde_json::from_slice(&json_data)
         .with_context(|| format!("Could not parse rustdoc JSON at {}", json_path.display()))?;
-    let (pages, signature_targets) = pages::render_pages(&json, package)?;
+    let route_root = match target_kind {
+        TargetKind::Library => PathBuf::from("api").join(text::slug(&package.name)),
+        TargetKind::Binary => PathBuf::from("binaries")
+            .join(text::slug(&package.name))
+            .join(target_name),
+    };
+    let (pages, signature_targets) = pages::render_pages(&json, package, &route_root)?;
     let page_count = terminal.highlight(&pages.len().to_string());
     let package_name = terminal.highlight(&package.name);
-    stage.finish(&format!(
-        "Extracted {page_count} API pages from {package_name}"
-    ));
+    stage.finish(&format!("Extracted {page_count} pages from {package_name}"));
 
-    Ok(ExtractedApi {
+    Ok(ExtractedTarget {
         package: package.clone(),
+        target_kind,
+        target_name: target_name.to_owned(),
+        route_root,
         crate_name,
         pages,
         signature_targets,

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use crate::{cli::Cli, config, metadata, rustdoc, site, terminal::Terminal};
 
@@ -20,7 +20,7 @@ pub fn run(cli: Cli) -> Result<()> {
         cli.manifest_path.as_deref(),
     )?;
     if selected.is_empty() {
-        anyhow::bail!("No library packages were selected.");
+        anyhow::bail!("No packages were selected.");
     }
 
     let features = if cli.features.is_empty() {
@@ -35,30 +35,29 @@ pub fn run(cli: Cli) -> Result<()> {
     };
     let no_default_features = cli.no_default_features || config.api.no_default_features;
 
-    let mut apis = Vec::with_capacity(selected.len());
+    let mut targets = Vec::new();
     for package in &selected {
-        let target = package
-            .library_target()
-            .with_context(|| format!("Package '{}' has no library target", package.name))?;
-        let api = rustdoc::extract(
-            package,
-            rustdoc::ExtractOptions {
-                target_name: &target.name,
-                target_directory: &metadata.target_directory,
-                toolchain: &cli.toolchain,
-                features: &features,
-                all_features,
-                no_default_features,
-            },
-            &terminal,
-        )?;
-        apis.push(api);
+        for (target, kind) in package.documentable_targets() {
+            targets.push(rustdoc::extract(
+                package,
+                rustdoc::ExtractOptions {
+                    target_name: &target.name,
+                    target_kind: kind,
+                    target_directory: &metadata.target_directory,
+                    toolchain: &cli.toolchain,
+                    features: &features,
+                    all_features,
+                    no_default_features,
+                },
+                &terminal,
+            )?);
+        }
     }
 
     let generated = site::generate_and_build(
         &config,
         &metadata,
-        &apis,
+        &targets,
         cli.content_dir.as_deref(),
         cli.out_dir.as_deref(),
         &terminal,

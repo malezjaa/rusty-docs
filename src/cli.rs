@@ -28,7 +28,7 @@ pub struct Cli {
     #[arg(short, long, value_name = "PACKAGE", conflicts_with = "workspace")]
     pub package: Option<String>,
 
-    /// Generate one site containing every library package in the workspace.
+    /// Generate one site for every library and binary target in the workspace.
     #[arg(long, conflicts_with = "package")]
     pub workspace: bool,
 

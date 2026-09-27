@@ -15,6 +15,7 @@ type PendingPage<'a> = (String, String, String, Vec<String>, &'a Value, String);
 pub(super) fn render_pages(
     json: &Value,
     package: &Package,
+    target_root: &Path,
 ) -> Result<(Vec<ApiPage>, HashMap<String, SignatureLinkTarget>)> {
     let index = json
         .get("index")
@@ -23,10 +24,9 @@ pub(super) fn render_pages(
     let paths = json
         .get("paths")
         .and_then(Value::as_object)
-        .context("rustdoc JSON has no public item paths")?;
+        .context("rustdoc JSON has no item paths")?;
     let external_crates = json.get("external_crates").and_then(Value::as_object);
     let signature_targets = signature_link_targets(paths, external_crates);
-    let crate_slug = text::slug(&package.name);
     let root_id = json
         .get("root")
         .and_then(Value::as_u64)
@@ -95,13 +95,13 @@ pub(super) fn render_pages(
         }
 
         let mut relative_path = if kind == "module" {
-            let mut path = PathBuf::from("api").join(&crate_slug);
+            let mut path = target_root.to_path_buf();
             for segment in names.iter().skip(1) {
                 path.push(text::slug(segment));
             }
             path.join("index.mdx")
         } else {
-            let mut path = PathBuf::from("api").join(&crate_slug);
+            let mut path = target_root.to_path_buf();
             for segment in names.iter().skip(1).take(names.len().saturating_sub(2)) {
                 path.push(text::slug(segment));
             }

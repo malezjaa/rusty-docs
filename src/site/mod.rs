@@ -10,7 +10,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, bail};
 use serde::Serialize;
 
-use crate::{config::Config, metadata::CargoMetadata, rustdoc::ExtractedApi, terminal::Terminal};
+use crate::{
+    config::Config, metadata::CargoMetadata, rustdoc::ExtractedTarget, terminal::Terminal,
+};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,7 +53,7 @@ pub struct BuildResult {
 pub fn generate_and_build(
     config: &Config,
     metadata: &CargoMetadata,
-    packages: &[ExtractedApi],
+    targets: &[ExtractedTarget],
     content_override: Option<&Path>,
     output_override: Option<&Path>,
     terminal: &Terminal,
@@ -82,14 +84,15 @@ pub fn generate_and_build(
         .site
         .title
         .clone()
-        .unwrap_or_else(|| metadata::default_title(packages));
-    let description = metadata::site_description(packages);
-    let repository_url = packages
+        .unwrap_or_else(|| metadata::default_title(targets));
+    let description = metadata::site_description(targets);
+    let repository_url = targets
         .iter()
-        .filter_map(|package| package.package.repository.as_deref())
+        .filter_map(|target| target.package.repository.as_deref())
         .find_map(metadata::normalize_github_url);
-    let package_summaries = packages
+    let package_summaries = targets
         .iter()
+        .filter(|target| target.target_kind.is_library())
         .map(|api| PackageSummary {
             name: api.package.name.clone(),
             crate_name: api.crate_name.clone(),
@@ -107,12 +110,21 @@ pub fn generate_and_build(
             slug: util::slug(&api.package.name),
         })
         .collect::<Vec<_>>();
-    let api_items = packages
+    let api_items = targets
         .iter()
-        .flat_map(|api| api.pages.iter())
-        .map(|page| ApiItemSummary {
-            kind: page.kind.clone(),
-            route: util::page_route(&page.relative_path),
+        .flat_map(|target| {
+            let mut items = Vec::with_capacity(target.pages.len() + 1);
+            if target.target_kind.is_binary() {
+                items.push(ApiItemSummary {
+                    kind: "binary".to_owned(),
+                    route: util::page_route(&target.route_root.join("index.mdx")),
+                });
+            }
+            items.extend(target.pages.iter().map(|page| ApiItemSummary {
+                kind: page.kind.clone(),
+                route: util::page_route(&page.relative_path),
+            }));
+            items
         })
         .collect();
     let site_config = SiteConfig {
@@ -131,26 +143,36 @@ pub fn generate_and_build(
     content::sync_content(&content_dir, &content_target)?;
     metadata::write_markdown(
         &content_target.join("index.mdx"),
-        &metadata::docs_index(&title, &description, packages),
+        &metadata::docs_index(&title, &description, targets),
     )?;
-    metadata::write_markdown(
-        &content_target.join("api/index.md"),
-        &metadata::api_index(packages),
-    )?;
+    if targets.iter().any(|target| target.target_kind.is_library()) {
+        metadata::write_markdown(
+            &content_target.join("api/index.md"),
+            &metadata::api_index(targets),
+        )?;
+    }
     stage.finish("Wrote site metadata and synced content");
 
-    let api_page_count = packages.iter().map(|api| api.pages.len()).sum::<usize>();
+    let api_page_count = targets
+        .iter()
+        .map(|target| target.pages.len() + 1)
+        .sum::<usize>();
     let mut workspace_routes = std::collections::HashMap::new();
-    for api in packages {
-        api_pages::add_workspace_routes(api, &mut workspace_routes);
+    for target in targets {
+        api_pages::add_workspace_routes(target, &mut workspace_routes);
     }
-    let progress = terminal.progress(api_page_count as u64, "Generating API pages");
-    for api in packages {
-        api_pages::write_package_pages(&content_target, api, &workspace_routes, progress.as_ref())?;
+    let progress = terminal.progress(api_page_count as u64, "Generating reference pages");
+    for target in targets {
+        api_pages::write_target_pages(
+            &content_target,
+            target,
+            &workspace_routes,
+            progress.as_ref(),
+        )?;
     }
     if let Some(progress) = progress {
         let page_count = terminal.highlight(&api_page_count.to_string());
-        terminal.finish_progress(progress, &format!("Generated {page_count} API pages"));
+        terminal.finish_progress(progress, &format!("Generated {page_count} reference pages"));
     }
 
     npm::check_node_tools()?;

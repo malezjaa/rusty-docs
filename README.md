@@ -1,70 +1,54 @@
 # rusty-docs
 
-`rusty-docs` builds one static documentation site from one or more Cargo
-library packages. The site combines public Rust API pages with custom
-Markdown or MDX content and uses the Fumadocs static Next.js starter.
+`rusty-docs` builds a static documentation site for Rust libraries and
+binaries. It combines rustdoc pages with your own Markdown or MDX content.
 
 ## Requirements
 
 - Rust and Cargo
-- A nightly Rust toolchain for rustdoc JSON output
-- Node.js and npm for the Next.js build
+- A nightly toolchain for rustdoc JSON
+- Node.js and npm
 
-With rustup, install the nightly toolchain with:
+Install nightly with `rustup toolchain install nightly`.
 
-```sh
-rustup toolchain install nightly
-```
+## Use
 
-The CLI does not install Rust toolchains. It runs `npm ci` when the generated
-site's dependencies are missing or stale.
-
-## Install and run
-
-Install the CLI from this repository:
+Install the CLI and run it from a Cargo project:
 
 ```sh
 cargo install --path .
-```
-
-Then run it from a Rust project:
-
-```sh
 rusty-docs
-rusty-docs --package my-library
+rusty-docs --package my-package
 rusty-docs --workspace
 ```
 
-When rusty-docs asks which packages to document, all available library
-packages start selected. Press Space to toggle a package, then Enter to
-continue. Use `--package` to document one named package or `--workspace` to
-include every library package without a prompt.
+Use `--package NAME` to select one package or `--workspace` to document every
+workspace package with library or binary targets. A selected package
+contributes its library and all binary targets. The workspace picker starts
+with every eligible package selected.
 
-Running rusty-docs from a workspace root opens this picker when the root is
-also a package. Links to selected workspace crates point to their pages in
-this site. Links to workspace crates you leave unselected keep their external
-rustdoc targets, such as docs.rs.
+The site keeps library pages under `/docs/api/` and adds a source reference for
+each binary under `/docs/binaries/`. Binary references include private Rust
+items. They document the program's source, not its command-line usage. Write
+usage guides in your content directory, which defaults to `docs/`.
 
-The generated Next.js project lives in `docs-site/`. The static website is in
-`docs-site/out/`.
+Use `--manifest-path PATH` to select another Cargo manifest. Use
+`--features a,b`, `--all-features`, and `--no-default-features` to control
+Cargo features. Use `--out-dir PATH` or `--content-dir PATH` to change the
+generated site or content directory.
 
-To inspect the build, run `npm start` from the generated project directory.
-The preview server serves the existing `out/` files at the configured base
-path. It redirects the root URL when `base_path` is not `/`.
+The generated Next.js project defaults to `docs-site/`; its static output is
+in `docs-site/out/`.
 
-Use `--manifest-path PATH` to point to another Cargo manifest. Use
-`--features feature-a,feature-b`, `--all-features`, and
-`--no-default-features` to choose Cargo features. Use `--out-dir PATH` or
-`--content-dir PATH` to change the generated app or the source content
-directory.
+`npm ci` runs when generated site dependencies are missing or stale.
 
 ## Configuration
 
-Create `rusty-docs.toml` at the Cargo workspace root:
+Create `rusty-docs.toml` at the workspace root:
 
 ```toml
 [site]
-title = "My library"
+title = "My project"
 url = "https://docs.example.com"
 content_dir = "docs"
 content_position = "end"
@@ -72,39 +56,27 @@ output_dir = "docs-site"
 base_path = "/"
 
 [api]
-package = "my-library"
+package = "my-package"
 features = ["serde"]
 all_features = false
 no_default_features = false
 ```
 
-The `url` field is optional. Set it to the site's canonical origin. Set
-`base_path` when the host serves the site below a URL path.
+The `url` is optional. Set `base_path` if the site is served below a path.
+Set `content_position` to `"start"` or `"end"` to move the content section.
+CLI flags override matching package, feature, content, and output settings.
 
-The CLI flags override matching package, feature, content, and output settings.
-Source Markdown and MDX files stay in `content_dir`. The CLI copies them into
-the generated site's Content section on each build. Set `content_position` to
-`"start"` or `"end"` to place that section at the start or end of the
-sidebar. It defaults to `"end"`. The generated app owns `content/docs/`
-and preserves other app files. The generated site keeps the default Fumadocs
-styles.
+Add Markdown or MDX files to `docs/`. For example,
+`docs/getting-started.mdx` becomes `/docs/content/getting-started`. Add a
+`meta.json` file to control the content section's title or page order.
 
-For example, `docs/getting-started.mdx` becomes
-`/docs/content/getting-started`. Add a `meta.json` file in the source content
-directory to set the section's sidebar title or order its pages.
+## Limits
 
-## Current limits
-
-- rustdoc JSON is unstable and requires nightly.
-- The CLI documents library targets. It does not generate pages for binary
-  targets.
-- The CLI documents public modules, structs, enums, traits, type aliases,
-  constants, statics, unions, functions, macros, and named re-exports. It does
-  not document private items or glob re-exports.
+- Rustdoc JSON is unstable and requires nightly.
 - Some signatures omit generic bounds and `where` clauses. Macro signatures
   use placeholders. Source-code links are not generated.
-- Static export has no server runtime. Search uses the Fumadocs static client.
+- The site is a static export and has no server runtime.
 
 ## License
 
-Licensed under the MIT license. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
