@@ -20,6 +20,7 @@ pub(super) fn ensure_template(site_dir: &Path) -> Result<()> {
         upgrade_api_reference_links(site_dir)?;
         upgrade_api_shared_kinds(site_dir)?;
         sidebar::upgrade_api_sidebar_layout(site_dir)?;
+        sidebar::upgrade_content_sidebar_position(site_dir)?;
         return Ok(());
     }
 

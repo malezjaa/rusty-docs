@@ -1,8 +1,8 @@
 # rusty-docs
 
 `rusty-docs` builds one static documentation site from one or more Cargo
-library packages. The site combines public Rust API pages with Markdown or
-MDX guides and uses the Fumadocs static Next.js starter.
+library packages. The site combines public Rust API pages with custom
+Markdown or MDX content and uses the Fumadocs static Next.js starter.
 
 ## Requirements
 
@@ -55,7 +55,8 @@ path. It redirects the root URL when `base_path` is not `/`.
 Use `--manifest-path PATH` to point to another Cargo manifest. Use
 `--features feature-a,feature-b`, `--all-features`, and
 `--no-default-features` to choose Cargo features. Use `--out-dir PATH` or
-`--content-dir PATH` to change the generated app or the source guide directory.
+`--content-dir PATH` to change the generated app or the source content
+directory.
 
 ## Configuration
 
@@ -66,6 +67,7 @@ Create `rusty-docs.toml` at the Cargo workspace root:
 title = "My library"
 url = "https://docs.example.com"
 content_dir = "docs"
+content_position = "end"
 output_dir = "docs-site"
 base_path = "/"
 
@@ -81,9 +83,15 @@ The `url` field is optional. Set it to the site's canonical origin. Set
 
 The CLI flags override matching package, feature, content, and output settings.
 Source Markdown and MDX files stay in `content_dir`. The CLI copies them into
-the generated site's Guides section on each build. It owns the generated
-app's `content/docs/` directory and preserves other app files. The generated
-site keeps the default Fumadocs styles.
+the generated site's Content section on each build. Set `content_position` to
+`"start"` or `"end"` to place that section at the start or end of the
+sidebar. It defaults to `"end"`. The generated app owns `content/docs/`
+and preserves other app files. The generated site keeps the default Fumadocs
+styles.
+
+For example, `docs/getting-started.mdx` becomes
+`/docs/content/getting-started`. Add a `meta.json` file in the source content
+directory to set the section's sidebar title or order its pages.
 
 ## Current limits
 

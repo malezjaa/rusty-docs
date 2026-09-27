@@ -16,7 +16,7 @@ pub(super) fn sync_content(source: &Path, destination: &Path) -> Result<()> {
     if !source.is_dir() {
         return Ok(());
     }
-    copy_content_tree(source, &destination.join("guides"))
+    copy_content_tree(source, &destination.join("content"))
 }
 
 fn copy_content_tree(source: &Path, destination: &Path) -> Result<()> {

@@ -25,7 +25,38 @@ export default function Layout({ children }: LayoutProps<'/docs'>) {
 }
 
 function markApiItems(tree: PageTree.Root): PageTree.Root {
-  return { ...tree, children: markApiItemNodes(tree.children) };
+  const nodes = sortApiItems(tree.children);
+  const contentSection = nodes.find(isContentSection);
+  const otherNodes = nodes.filter((node) => !isContentSection(node));
+  const children =
+    siteConfig.contentPosition === 'start'
+      ? [...(contentSection ? [contentSection] : []), ...otherNodes]
+      : [...otherNodes, ...(contentSection ? [contentSection] : [])];
+  return { ...tree, children: children.map(markApiItemNode) };
+}
+
+function isContentSection(node: PageTreeItem): boolean {
+  return (
+    node.type === 'folder' &&
+    ((node.index !== undefined && isContentUrl(node.index.url)) ||
+      node.children.some(hasContentPage))
+  );
+}
+
+function hasContentPage(node: PageTreeItem): boolean {
+  if (node.type === 'page') return isContentUrl(node.url);
+  if (node.type === 'folder') {
+    return (
+      (node.index !== undefined && isContentUrl(node.index.url)) ||
+      node.children.some(hasContentPage)
+    );
+  }
+  return false;
+}
+
+function isContentUrl(url: string): boolean {
+  const path = normalizeApiPageUrl(url);
+  return path === '/docs/content' || path.startsWith('/docs/content/');
 }
 
 function markApiItemNodes(nodes: PageTreeItem[]): PageTreeItem[] {

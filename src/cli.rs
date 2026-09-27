@@ -36,7 +36,7 @@ pub struct Cli {
     #[arg(long, value_name = "PATH")]
     pub config: Option<PathBuf>,
 
-    /// Directory containing user Markdown and MDX files.
+    /// Directory containing custom Markdown and MDX content.
     #[arg(long, value_name = "PATH")]
     pub content_dir: Option<PathBuf>,
 

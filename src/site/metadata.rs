@@ -25,7 +25,7 @@ pub(super) fn docs_index(title: &str, description: &str, packages: &[ExtractedAp
             super::util::slug(&api.package.name)
         ));
     }
-    output.push_str("\nProject guides are in the Guides section.\n");
+    output.push_str("\nAdditional documentation pages are available in the sidebar.\n");
     output
 }
 
@@ -49,11 +49,14 @@ pub(super) fn api_index(packages: &[ExtractedApi]) -> String {
 pub(super) fn site_description(packages: &[ExtractedApi]) -> String {
     if packages.len() == 1 {
         return packages[0].package.description.clone().unwrap_or_else(|| {
-            format!("API reference and guides for {}.", packages[0].package.name)
+            format!(
+                "API reference and additional documentation for {}.",
+                packages[0].package.name
+            )
         });
     }
     format!(
-        "API reference and guides for {} Rust packages.",
+        "API reference and additional documentation for {} Rust packages.",
         packages.len()
     )
 }

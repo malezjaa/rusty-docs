@@ -16,8 +16,26 @@ pub struct SiteOptions {
     pub title: Option<String>,
     pub url: Option<String>,
     pub content_dir: PathBuf,
+    pub content_position: ContentPosition,
     pub output_dir: PathBuf,
     pub base_path: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ContentPosition {
+    Start,
+    #[default]
+    End,
+}
+
+impl ContentPosition {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::End => "end",
+        }
+    }
 }
 
 impl Default for SiteOptions {
@@ -26,6 +44,7 @@ impl Default for SiteOptions {
             title: None,
             url: None,
             content_dir: PathBuf::from("docs"),
+            content_position: ContentPosition::default(),
             output_dir: PathBuf::from("docs-site"),
             base_path: "/".to_owned(),
         }

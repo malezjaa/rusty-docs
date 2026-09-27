@@ -18,6 +18,7 @@ struct SiteConfig {
     title: String,
     description: String,
     base_path: String,
+    content_position: String,
     site_url: Option<String>,
     repository_url: Option<String>,
     packages: Vec<PackageSummary>,
@@ -118,13 +119,14 @@ pub fn generate_and_build(
         title: title.clone(),
         description: description.clone(),
         base_path: base_path.clone(),
+        content_position: config.site.content_position.as_str().to_owned(),
         site_url,
         repository_url,
         packages: package_summaries,
         api_items,
     };
 
-    let stage = terminal.stage("Writing site metadata and syncing guides");
+    let stage = terminal.stage("Writing site metadata and syncing content");
     metadata::write_json(&site_dir.join("rusty-docs-site.json"), &site_config)?;
     content::sync_content(&content_dir, &content_target)?;
     metadata::write_markdown(
@@ -135,7 +137,7 @@ pub fn generate_and_build(
         &content_target.join("api/index.md"),
         &metadata::api_index(packages),
     )?;
-    stage.finish("Wrote site metadata and synced guides");
+    stage.finish("Wrote site metadata and synced content");
 
     let api_page_count = packages.iter().map(|api| api.pages.len()).sum::<usize>();
     let mut workspace_routes = std::collections::HashMap::new();

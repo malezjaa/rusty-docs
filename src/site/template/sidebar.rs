@@ -369,3 +369,56 @@ function hasApiItem(node: PageTreeItem): boolean {
     source.push_str(SORT_HELPERS);
     fs::write(&path, source).with_context(|| format!("Could not update layout {}", path.display()))
 }
+
+pub(super) fn upgrade_content_sidebar_position(site_dir: &Path) -> Result<()> {
+    const OLD_ROOT: &str = r#"function markApiItems(tree: PageTree.Root): PageTree.Root {
+  return { ...tree, children: markApiItemNodes(tree.children) };
+}"#;
+    const NEW_ROOT: &str = r#"function markApiItems(tree: PageTree.Root): PageTree.Root {
+  const nodes = sortApiItems(tree.children);
+  const contentSection = nodes.find(isContentSection);
+  const otherNodes = nodes.filter((node) => !isContentSection(node));
+  const children =
+    siteConfig.contentPosition === 'start'
+      ? [...(contentSection ? [contentSection] : []), ...otherNodes]
+      : [...otherNodes, ...(contentSection ? [contentSection] : [])];
+  return { ...tree, children: children.map(markApiItemNode) };
+}
+
+function isContentSection(node: PageTreeItem): boolean {
+  return (
+    node.type === 'folder' &&
+    ((node.index !== undefined && isContentUrl(node.index.url)) ||
+      node.children.some(hasContentPage))
+  );
+}
+
+function hasContentPage(node: PageTreeItem): boolean {
+  if (node.type === 'page') return isContentUrl(node.url);
+  if (node.type === 'folder') {
+    return (
+      (node.index !== undefined && isContentUrl(node.index.url)) ||
+      node.children.some(hasContentPage)
+    );
+  }
+  return false;
+}
+
+function isContentUrl(url: string): boolean {
+  const path = normalizeApiPageUrl(url);
+  return path === '/docs/content' || path.startsWith('/docs/content/');
+}"#;
+
+    let path = site_dir.join("app/docs/layout.tsx");
+    if !path.is_file() {
+        return Ok(());
+    }
+    let mut source = fs::read_to_string(&path)
+        .with_context(|| format!("Could not read layout {}", path.display()))?;
+    if source.contains("function isContentSection(") || !source.contains(OLD_ROOT) {
+        return Ok(());
+    }
+
+    source = source.replace(OLD_ROOT, NEW_ROOT);
+    fs::write(&path, source).with_context(|| format!("Could not update layout {}", path.display()))
+}
