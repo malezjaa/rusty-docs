@@ -1,68 +1,143 @@
+mod links;
+
 use std::{collections::HashMap, path::Path};
 
 use anyhow::Result;
 use indicatif::ProgressBar;
 
-use crate::rustdoc::{ExtractedTarget, member_anchor};
+use crate::rustdoc::{ApiPage, ExtractedTarget, SignatureLinkTarget, member_anchor};
 
 use super::{metadata, util};
+
+type ItemRoutes = HashMap<String, String>;
+
+#[derive(Default)]
+pub(super) struct WorkspaceRoutes {
+    by_crate: HashMap<String, HashMap<String, String>>,
+}
+
+struct TargetOverview {
+    title: String,
+    description: String,
+    heading: String,
+    item_heading: &'static str,
+    item_scope: &'static str,
+}
+
+impl TargetOverview {
+    fn new(target: &ExtractedTarget) -> Self {
+        if target.target_kind.is_library() {
+            Self {
+                title: format!("{} v{}", target.package.name, target.package.version),
+                description: target
+                    .package
+                    .description
+                    .clone()
+                    .unwrap_or_else(|| "Public Rust API reference.".to_owned()),
+                heading: format!("# `{}`", target.package.name),
+                item_heading: "Public items",
+                item_scope: "public API",
+            }
+        } else {
+            Self {
+                title: format!("{} binary", target.target_name),
+                description: format!(
+                    "Source reference for the `{}` binary in package `{}`.",
+                    target.target_name, target.package.name
+                ),
+                heading: format!("# `{}`", target.target_name),
+                item_heading: "Items",
+                item_scope: "documented item",
+            }
+        }
+    }
+
+    fn render(&self, page_count: usize, api_items: &str) -> String {
+        format!(
+            "---\ntitle: {}\ndescription: {}\n---\n\n{}\n\n{}\n\nThis reference contains {} {} pages.\n\n## {}\n\n{}",
+            metadata::yaml_quote(&self.title),
+            metadata::yaml_quote(&self.description),
+            self.heading,
+            self.description,
+            page_count,
+            self.item_scope,
+            self.item_heading,
+            api_items,
+        )
+    }
+}
+
+impl WorkspaceRoutes {
+    pub(super) fn from_targets(targets: &[ExtractedTarget]) -> Self {
+        let mut routes = Self::default();
+        for target in targets {
+            routes.add_target(target);
+        }
+        routes
+    }
+
+    fn insert(&mut self, crate_name: &str, rust_path: &str, route: String) {
+        self.by_crate
+            .entry(crate_name.to_owned())
+            .or_default()
+            .insert(rust_path.to_owned(), route);
+    }
+
+    fn get(&self, crate_name: &str, rust_path: &str) -> Option<&str> {
+        self.by_crate
+            .get(crate_name)?
+            .get(rust_path)
+            .map(String::as_str)
+    }
+
+    fn add_target(&mut self, api: &ExtractedTarget) {
+        if !api.target_kind.is_library() {
+            return;
+        }
+
+        let package_root = api.route_root.join("index.mdx");
+        self.insert(
+            &api.crate_name,
+            &api.crate_name,
+            util::page_route(&package_root),
+        );
+
+        for page in &api.pages {
+            self.insert(
+                &api.crate_name,
+                &page.rust_path,
+                util::page_route(&page.relative_path),
+            );
+        }
+
+        for (id, target) in &api.signature_targets {
+            if target.local_id.as_deref() != Some(id.as_str()) {
+                continue;
+            }
+            let Some(rust_path) = target.rust_path.as_deref() else {
+                continue;
+            };
+            if let Some(route) = local_member_route(api, id, target) {
+                self.insert(&api.crate_name, rust_path, route);
+            }
+        }
+    }
+}
 
 pub(super) fn write_target_pages(
     content_root: &Path,
     api: &ExtractedTarget,
-    workspace_routes: &HashMap<(String, String), String>,
+    workspace_routes: &WorkspaceRoutes,
     progress: Option<&ProgressBar>,
 ) -> Result<()> {
-    let target_root = api.route_root.clone();
-    let (title, description, overview_heading, item_heading, item_scope) =
-        if api.target_kind.is_library() {
-            (
-                format!("{} v{}", api.package.name, api.package.version),
-                api.package
-                    .description
-                    .clone()
-                    .unwrap_or_else(|| "Public Rust API reference.".to_owned()),
-                format!("# `{}`", api.package.name),
-                "Public items",
-                "public API",
-            )
-        } else {
-            (
-                format!("{} binary", api.target_name),
-                format!(
-                    "Source reference for the `{}` binary in package `{}`.",
-                    api.target_name, api.package.name
-                ),
-                format!("# `{}`", api.target_name),
-                "Items",
-                "documented item",
-            )
-        };
-    let mut route_by_id = api
-        .pages
-        .iter()
-        .filter(|page| page.kind != "reexport")
-        .map(|page| {
-            (
-                page.rustdoc_id.clone(),
-                util::page_route(&page.relative_path),
-            )
-        })
-        .collect::<HashMap<_, _>>();
-    add_local_member_routes(api, &mut route_by_id);
+    let target_root = &api.route_root;
+    let overview = TargetOverview::new(api);
+    let route_by_id = item_routes(api);
     let api_items = grouped_api_items(&api.pages, 3);
-    let overview = format!(
-        "---\ntitle: {}\ndescription: {}\n---\n\n{}\n\n{}\n\nThis reference contains {} {item_scope} pages.\n\n## {item_heading}\n\n{}",
-        metadata::yaml_quote(&title),
-        metadata::yaml_quote(&description),
-        overview_heading,
-        description,
-        api.pages.len(),
-        api_items
-    );
+    let overview_markdown = overview.render(api.pages.len(), &api_items);
     metadata::write_markdown(
-        &content_root.join(&target_root).join("index.mdx"),
-        &add_api_component_imports(&overview),
+        &content_root.join(target_root).join("index.mdx"),
+        &add_api_component_imports(&overview_markdown),
     )?;
     if let Some(progress) = progress {
         progress.inc(1);
@@ -73,37 +148,14 @@ pub(super) fn write_target_pages(
         if page.relative_path == target_root.join("index.mdx") {
             continue;
         }
-        let mut markdown = rewrite_doc_link_groups(
+        let mut markdown = links::rewrite_doc_link_groups(
             &page.markdown,
             &page.doc_links,
             &route_by_id,
             workspace_routes,
         );
-        if page.kind == "module" {
-            let module_dir = page.relative_path.parent().unwrap_or(Path::new("."));
-            let children = api.pages.iter().filter(|candidate| {
-                let Some(parent) = candidate.relative_path.parent() else {
-                    return false;
-                };
-                let parent_module = if candidate.kind == "module" {
-                    parent.parent().unwrap_or(parent)
-                } else {
-                    parent
-                };
-                parent_module == module_dir
-            });
-            let items = grouped_api_items(children, 3);
-            if !items.is_empty() {
-                let heading = if api.target_kind.is_library() {
-                    "Public items"
-                } else {
-                    "Items"
-                };
-                markdown.push_str(&format!("\n## {heading}\n\n"));
-                markdown.push_str(&items);
-            }
-        }
-        rewrite_signature_type_links(&mut markdown, api, &route_by_id, workspace_routes);
+        append_module_items(&mut markdown, page, api);
+        links::rewrite_signature_type_links(&mut markdown, api, &route_by_id, workspace_routes);
         metadata::write_markdown(&path, &add_api_component_imports(&markdown))?;
         if let Some(progress) = progress {
             progress.inc(1);
@@ -112,7 +164,53 @@ pub(super) fn write_target_pages(
     Ok(())
 }
 
-fn add_local_member_routes(api: &ExtractedTarget, route_by_id: &mut HashMap<String, String>) {
+fn item_routes(api: &ExtractedTarget) -> ItemRoutes {
+    let mut routes = api
+        .pages
+        .iter()
+        .filter(|page| page.kind != "reexport")
+        .map(|page| {
+            (
+                page.rustdoc_id.clone(),
+                util::page_route(&page.relative_path),
+            )
+        })
+        .collect();
+    add_local_member_routes(api, &mut routes);
+    routes
+}
+
+fn append_module_items(markdown: &mut String, page: &ApiPage, api: &ExtractedTarget) {
+    if page.kind != "module" {
+        return;
+    }
+
+    let module_dir = page.relative_path.parent().unwrap_or(Path::new("."));
+    let children = api.pages.iter().filter(|candidate| {
+        let Some(parent) = candidate.relative_path.parent() else {
+            return false;
+        };
+        let parent_module = if candidate.kind == "module" {
+            parent.parent().unwrap_or(parent)
+        } else {
+            parent
+        };
+        parent_module == module_dir
+    });
+    let items = grouped_api_items(children, 3);
+    if items.is_empty() {
+        return;
+    }
+
+    let heading = if api.target_kind.is_library() {
+        "Public items"
+    } else {
+        "Items"
+    };
+    markdown.push_str(&format!("\n## {heading}\n\n{items}"));
+}
+
+fn add_local_member_routes(api: &ExtractedTarget, route_by_id: &mut ItemRoutes) {
     for (id, target) in &api.signature_targets {
         if target.local_id.as_deref() != Some(id.as_str()) || route_by_id.contains_key(id) {
             continue;
@@ -123,42 +221,10 @@ fn add_local_member_routes(api: &ExtractedTarget, route_by_id: &mut HashMap<Stri
     }
 }
 
-pub(super) fn add_workspace_routes(
-    api: &ExtractedTarget,
-    workspace_routes: &mut HashMap<(String, String), String>,
-) {
-    if !api.target_kind.is_library() {
-        return;
-    }
-
-    let package_root = api.route_root.join("index.mdx");
-    workspace_routes.insert(
-        (api.crate_name.clone(), api.crate_name.clone()),
-        util::page_route(&package_root),
-    );
-    for page in &api.pages {
-        workspace_routes.insert(
-            (api.crate_name.clone(), page.rust_path.clone()),
-            util::page_route(&page.relative_path),
-        );
-    }
-    for (id, target) in &api.signature_targets {
-        if target.local_id.as_deref() != Some(id.as_str()) {
-            continue;
-        }
-        let Some(rust_path) = target.rust_path.as_deref() else {
-            continue;
-        };
-        if let Some(route) = local_member_route(api, id, target) {
-            workspace_routes.insert((api.crate_name.clone(), rust_path.to_owned()), route);
-        }
-    }
-}
-
 fn local_member_route(
     api: &ExtractedTarget,
     id: &str,
-    target: &crate::rustdoc::SignatureLinkTarget,
+    target: &SignatureLinkTarget,
 ) -> Option<String> {
     let (rust_path, kind) = (target.rust_path.as_deref()?, target.kind.as_deref()?);
     let (parent_path, name) = rust_path.rsplit_once("::")?;
@@ -179,87 +245,6 @@ fn local_member_route(
     Some(format!("{route}#{fragment}"))
 }
 
-fn rewrite_signature_type_links(
-    markdown: &mut String,
-    api: &ExtractedTarget,
-    route_by_id: &HashMap<String, String>,
-    workspace_routes: &HashMap<(String, String), String>,
-) {
-    const LINK_START: char = '\u{e000}';
-    const LINK_SEPARATOR: char = '\u{e001}';
-    const LINK_END: char = '\u{e002}';
-
-    let (frontmatter, source) = split_frontmatter(markdown);
-    let mut output = String::with_capacity(source.len());
-    let mut cursor = 0;
-    while let Some(relative_start) = source[cursor..].find(LINK_START) {
-        let start = cursor + relative_start;
-        output.push_str(&source[cursor..start]);
-        let key_start = start + LINK_START.len_utf8();
-        let Some(relative_separator) = source[key_start..].find(LINK_SEPARATOR) else {
-            output.push(LINK_START);
-            cursor = key_start;
-            continue;
-        };
-        let separator = key_start + relative_separator;
-        let label_start = separator + LINK_SEPARATOR.len_utf8();
-        let Some(relative_end) = source[label_start..].find(LINK_END) else {
-            output.push(LINK_START);
-            cursor = key_start;
-            continue;
-        };
-        let end = label_start + relative_end;
-        let key = &source[key_start..separator];
-        let label = &source[label_start..end];
-        let target = api.signature_targets.get(key).and_then(|target| {
-            target
-                .local_id
-                .as_ref()
-                .and_then(|id| route_by_id.get(id))
-                .map(|route| ("L", route.as_str()))
-                .or_else(|| {
-                    target
-                        .crate_name
-                        .as_ref()
-                        .zip(target.rust_path.as_ref())
-                        .and_then(|(crate_name, path)| {
-                            workspace_routes.get(&(crate_name.clone(), path.clone()))
-                        })
-                        .map(|route| ("L", route.as_str()))
-                })
-                .or_else(|| target.external_url.as_deref().map(|url| ("E", url)))
-        });
-        if let Some((kind, href)) = target {
-            output.push(LINK_START);
-            output.push_str(kind);
-            output.push(':');
-            output.push_str(href);
-            output.push(LINK_SEPARATOR);
-        }
-        output.push_str(label);
-        if target.is_some() {
-            output.push(LINK_END);
-        }
-        cursor = end + LINK_END.len_utf8();
-    }
-    output.push_str(&source[cursor..]);
-    let mut rewritten = String::with_capacity(frontmatter.len() + output.len());
-    rewritten.push_str(frontmatter);
-    rewritten.push_str(&output);
-    *markdown = rewritten;
-}
-
-fn split_frontmatter(markdown: &str) -> (&str, &str) {
-    let Some(after_opening) = markdown.strip_prefix("---\n") else {
-        return ("", markdown);
-    };
-    let Some(end) = after_opening.find("\n---\n") else {
-        return ("", markdown);
-    };
-    let body_start = 4 + end + "\n---\n".len();
-    markdown.split_at(body_start)
-}
-
 const API_KIND_SECTIONS: &[(&str, &str)] = &[
     ("module", "Modules"),
     ("struct", "Structs"),
@@ -278,10 +263,7 @@ const API_KIND_SECTIONS: &[(&str, &str)] = &[
     ("reexport", "Re-exports"),
 ];
 
-fn grouped_api_items<'a>(
-    pages: impl IntoIterator<Item = &'a crate::rustdoc::ApiPage>,
-    level: usize,
-) -> String {
+fn grouped_api_items<'a>(pages: impl IntoIterator<Item = &'a ApiPage>, level: usize) -> String {
     let pages = pages.into_iter().collect::<Vec<_>>();
     API_KIND_SECTIONS
         .iter()
@@ -310,7 +292,7 @@ fn grouped_api_items<'a>(
                         util::mdx_string(&page.kind),
                         util::mdx_string(&page.title),
                         util::mdx_string(&page.rust_path),
-                        mdx_text(&page.description)
+                        links::mdx_text(&page.description)
                     )
                 })
                 .collect::<Vec<_>>()
@@ -358,396 +340,4 @@ fn add_api_component_imports(markdown: &str) -> String {
         &markdown[..insertion],
         &markdown[insertion..]
     )
-}
-
-fn rewrite_doc_link_groups(
-    markdown: &str,
-    groups: &[crate::rustdoc::DocLinkGroup],
-    route_by_id: &HashMap<String, String>,
-    workspace_routes: &HashMap<(String, String), String>,
-) -> String {
-    let source = normalize_reference_link_destinations(markdown);
-    let mut output = String::with_capacity(source.len());
-    let mut cursor = 0;
-    for group in groups {
-        let chunk = normalize_reference_link_destinations(&group.markdown);
-        if chunk.is_empty() {
-            continue;
-        }
-        let Some(relative_start) = source[cursor..].find(&chunk) else {
-            continue;
-        };
-        let start = cursor + relative_start;
-        let end = start + chunk.len();
-        output.push_str(&source[cursor..start]);
-        let mut rewritten = chunk;
-        rewrite_link_tokens(&mut rewritten, &group.links, route_by_id, workspace_routes);
-        output.push_str(&rewritten);
-        cursor = end;
-    }
-    output.push_str(&source[cursor..]);
-    output
-}
-
-fn rewrite_link_tokens(
-    output: &mut String,
-    links: &[(String, crate::rustdoc::DocLinkTarget)],
-    route_by_id: &HashMap<String, String>,
-    workspace_routes: &HashMap<(String, String), String>,
-) {
-    for (label, target) in links {
-        let (route, external_kind) = match target {
-            crate::rustdoc::DocLinkTarget::Item(target_id) => {
-                let Some(route) = route_by_id.get(target_id) else {
-                    continue;
-                };
-                (route.as_str(), None)
-            }
-            crate::rustdoc::DocLinkTarget::Url {
-                href,
-                kind,
-                crate_name,
-                rust_path,
-            } => {
-                if let Some(route) = workspace_routes.get(&(crate_name.clone(), rust_path.clone()))
-                {
-                    (route.as_str(), None)
-                } else {
-                    (href.as_str(), Some(kind.as_str()))
-                }
-            }
-        };
-        *output = rewrite_named_reference_link_destinations(output, label, route, external_kind);
-        *output = rewrite_named_link_destinations(output, label, route, external_kind);
-        let labels = if label.starts_with('`') && label.ends_with('`') {
-            vec![(format!("[{label}]"), true)]
-        } else {
-            vec![
-                (format!("[{label}]"), false),
-                (format!("[`{label}`]"), true),
-            ]
-        };
-        for (token, code_label) in labels {
-            let replacement = if let Some(kind) = external_kind {
-                let display_label = if code_label {
-                    format!("<code>{}</code>", html_escape_text(label.trim_matches('`')))
-                } else {
-                    html_escape_text(label)
-                };
-                external_api_link(route, kind, &display_label)
-            } else {
-                format!("{token}({route})")
-            };
-            *output = replace_shortcut_link(output, &token, &replacement);
-        }
-    }
-}
-
-fn rewrite_named_reference_link_destinations(
-    markdown: &str,
-    name: &str,
-    href: &str,
-    external_kind: Option<&str>,
-) -> String {
-    let mut output = String::with_capacity(markdown.len());
-    let mut in_fenced_code = false;
-    let mut reference_labels = Vec::new();
-    for line in markdown.split_inclusive('\n') {
-        let trimmed_line = line.trim_start();
-        if trimmed_line.starts_with("```") || trimmed_line.starts_with("~~~") {
-            in_fenced_code = !in_fenced_code;
-            output.push_str(line);
-            continue;
-        }
-        if in_fenced_code {
-            output.push_str(line);
-            continue;
-        }
-
-        let line_without_ending = line.strip_suffix('\n').unwrap_or(line);
-        let leading_space = line_without_ending.len() - line_without_ending.trim_start().len();
-        if leading_space > 3 {
-            output.push_str(line);
-            continue;
-        }
-        let definition = &line_without_ending[leading_space..];
-        if !definition.starts_with('[') {
-            output.push_str(line);
-            continue;
-        }
-        let Some(label_end) = definition.find("]:") else {
-            output.push_str(line);
-            continue;
-        };
-        let destination_start = label_end + 2;
-        let destination_with_space = &definition[destination_start..];
-        let whitespace = destination_with_space.len() - destination_with_space.trim_start().len();
-        let destination = &destination_with_space[whitespace..];
-        let Some((target_start, target_end, target)) = markdown_link_destination(destination)
-        else {
-            output.push_str(line);
-            continue;
-        };
-        if target != name {
-            output.push_str(line);
-            continue;
-        }
-
-        reference_labels.push(definition[1..label_end].to_owned());
-        let target_start = leading_space + destination_start + whitespace + target_start;
-        let target_end = leading_space + destination_start + whitespace + target_end;
-        output.push_str(&line_without_ending[..target_start]);
-        output.push_str(href);
-        output.push_str(&line_without_ending[target_end..]);
-        if line.ends_with('\n') {
-            output.push('\n');
-        }
-    }
-
-    for label in reference_labels {
-        let token = format!("[{label}]");
-        let replacement = if let Some(kind) = external_kind {
-            let display_label = if label.starts_with('`') && label.ends_with('`') {
-                format!("<code>{}</code>", html_escape_text(label.trim_matches('`')))
-            } else {
-                html_escape_text(&label)
-            };
-            external_api_link(href, kind, &display_label)
-        } else {
-            format!("{token}({href})")
-        };
-        output = replace_shortcut_link(&output, &token, &replacement);
-    }
-
-    output
-}
-
-fn rewrite_named_link_destinations(
-    markdown: &str,
-    name: &str,
-    href: &str,
-    external_kind: Option<&str>,
-) -> String {
-    let mut output = String::with_capacity(markdown.len());
-    let mut cursor = 0;
-    while let Some(relative_end) = markdown[cursor..].find("](") {
-        let label_end = cursor + relative_end;
-        let Some(relative_start) = markdown[..label_end].rfind('[') else {
-            output.push_str(&markdown[cursor..]);
-            return output;
-        };
-        let label_start = relative_start + 1;
-        let open_paren = label_end + 1;
-        let Some(link_end) = markdown_link_end(markdown, open_paren) else {
-            output.push_str(&markdown[cursor..]);
-            return output;
-        };
-        let destination = markdown_link_destination(&markdown[open_paren + 1..link_end]);
-        if markdown[..relative_start].ends_with('!')
-            || inside_api_signature(markdown, relative_start)
-            || destination.is_none_or(|(_, _, destination)| destination != name)
-        {
-            let next_cursor = label_end + 2;
-            output.push_str(&markdown[cursor..next_cursor]);
-            cursor = next_cursor;
-            continue;
-        }
-
-        output.push_str(&markdown[cursor..relative_start]);
-        if let Some(kind) = external_kind {
-            let link_label = &markdown[label_start..label_end];
-            let display_label = if link_label.starts_with('`') && link_label.ends_with('`') {
-                format!(
-                    "<code>{}</code>",
-                    html_escape_text(link_label.trim_matches('`'))
-                )
-            } else {
-                html_escape_text(link_label)
-            };
-            output.push_str(&external_api_link(href, kind, &display_label));
-        } else {
-            let (destination_start, destination_end, _) =
-                destination.expect("matched destination must be present");
-            let destination_start = open_paren + 1 + destination_start;
-            let destination_end = open_paren + 1 + destination_end;
-            output.push_str(&markdown[relative_start..destination_start]);
-            output.push_str(href);
-            output.push_str(&markdown[destination_end..=link_end]);
-        }
-        cursor = link_end + 1;
-    }
-    output.push_str(&markdown[cursor..]);
-    output
-}
-
-fn external_api_link(href: &str, kind: &str, label: &str) -> String {
-    let href = html_escape_attribute(href);
-    let kind = html_escape_attribute(kind);
-    format!(
-        "<a className=\"api-reference-link\" href=\"{href}\" data-kind=\"{kind}\" target=\"_blank\" rel=\"noopener noreferrer\"><ApiItemMark compact kind=\"{kind}\" />{label}</a>"
-    )
-}
-
-fn markdown_link_destination(destination: &str) -> Option<(usize, usize, &str)> {
-    let leading_whitespace = destination.len() - destination.trim_start().len();
-    let destination = destination.trim_start();
-    if let Some(destination) = destination.strip_prefix('<') {
-        let (href, _) = destination.split_once('>')?;
-        let start = leading_whitespace;
-        return Some((start, start + href.len() + 2, href));
-    }
-    let href = destination.split_whitespace().next()?;
-    let start = leading_whitespace;
-    Some((start, start + href.len(), href))
-}
-
-fn replace_shortcut_link(markdown: &str, token: &str, replacement: &str) -> String {
-    let mut output = String::with_capacity(markdown.len());
-    let mut cursor = 0;
-    while let Some(relative_start) = markdown[cursor..].find(token) {
-        let start = cursor + relative_start;
-        let end = start + token.len();
-        let previous = markdown[..start].chars().next_back();
-        let next = markdown[end..].chars().next();
-        let explicit_link_end =
-            (previous != Some('!') && next == Some('(') && !inside_api_signature(markdown, start))
-                .then(|| markdown_link_end(markdown, end))
-                .flatten();
-        if let Some(link_end) = explicit_link_end {
-            output.push_str(&markdown[cursor..start]);
-            output.push_str(replacement);
-            cursor = link_end + 1;
-            continue;
-        }
-        let is_shortcut_link = previous != Some('!')
-            && !matches!(next, Some('(' | '[' | ':'))
-            && !inside_api_signature(markdown, start);
-        output.push_str(&markdown[cursor..start]);
-        if is_shortcut_link {
-            output.push_str(replacement);
-        } else {
-            output.push_str(token);
-        }
-        cursor = end;
-    }
-    output.push_str(&markdown[cursor..]);
-    output
-}
-
-fn markdown_link_end(markdown: &str, open_paren: usize) -> Option<usize> {
-    let mut depth = 0;
-    let mut escaped = false;
-    for (offset, character) in markdown[open_paren..].char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        match character {
-            '\\' => escaped = true,
-            '(' => depth += 1,
-            ')' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(open_paren + offset);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-fn inside_api_signature(markdown: &str, index: usize) -> bool {
-    let Some(start) = markdown[..index].rfind("<ApiSignature") else {
-        return false;
-    };
-    markdown[start..]
-        .find("/>")
-        .is_some_and(|relative_end| start + relative_end > index)
-}
-
-fn normalize_reference_link_destinations(markdown: &str) -> String {
-    let mut output = String::with_capacity(markdown.len());
-    let mut in_fenced_code = false;
-    for line in markdown.split_inclusive('\n') {
-        let trimmed_line = line.trim_start();
-        if trimmed_line.starts_with("```") || trimmed_line.starts_with("~~~") {
-            in_fenced_code = !in_fenced_code;
-            output.push_str(line);
-            continue;
-        }
-        if in_fenced_code {
-            output.push_str(line);
-            continue;
-        }
-        let line_without_ending = line.strip_suffix('\n').unwrap_or(line);
-        let leading_space = line_without_ending.len() - line_without_ending.trim_start().len();
-        let definition = &line_without_ending[leading_space..];
-        let Some(label_end) = definition.find("]:") else {
-            output.push_str(line);
-            continue;
-        };
-        let destination_start = label_end + 2;
-        let destination_with_space = &definition[destination_start..];
-        let whitespace = destination_with_space.len() - destination_with_space.trim_start().len();
-        let destination = &destination_with_space[whitespace..];
-        let Some(link_text_end) = destination
-            .strip_prefix('[')
-            .and_then(|value| value.find(']'))
-        else {
-            output.push_str(line);
-            continue;
-        };
-        let after_link_text = link_text_end + 2;
-        let Some(after_open_paren) = destination[after_link_text..].strip_prefix('(') else {
-            output.push_str(line);
-            continue;
-        };
-        let Some(href_end) = after_open_paren.find(')') else {
-            output.push_str(line);
-            continue;
-        };
-        let href = &after_open_paren[..href_end];
-        if !(href.starts_with("https://") || href.starts_with("http://")) {
-            output.push_str(line);
-            continue;
-        }
-
-        let destination_offset = leading_space + destination_start + whitespace;
-        let end_offset = destination_offset + after_link_text + 1 + href_end + 1;
-        output.push_str(&line_without_ending[..destination_offset]);
-        output.push('<');
-        output.push_str(href);
-        output.push('>');
-        output.push_str(&line_without_ending[end_offset..]);
-        if line.ends_with('\n') {
-            output.push('\n');
-        }
-    }
-    output
-}
-
-fn html_escape_text(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
-
-fn mdx_text(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
-    for character in value.chars() {
-        match character {
-            '<' => escaped.push_str("&lt;"),
-            '>' => escaped.push_str("&gt;"),
-            '{' => escaped.push_str("&#123;"),
-            '}' => escaped.push_str("&#125;"),
-            _ => escaped.push(character),
-        }
-    }
-    escaped
-}
-
-fn html_escape_attribute(value: &str) -> String {
-    html_escape_text(value).replace('"', "&quot;")
 }

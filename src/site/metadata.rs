@@ -178,5 +178,31 @@ pub(super) fn write_markdown(path: &Path, contents: &str) -> Result<()> {
 }
 
 pub(super) fn yaml_quote(value: &str) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_owned())
+    crate::formatting::json_string(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_site_paths_and_origins() {
+        assert_eq!(normalize_base_path(" /docs/ ").unwrap(), "/docs");
+        assert_eq!(normalize_base_path("/").unwrap(), "/");
+        assert!(normalize_base_path("docs").is_err());
+        assert_eq!(
+            normalize_site_url("https://example.com/").unwrap(),
+            "https://example.com"
+        );
+        assert!(normalize_site_url("https://example.com/docs").is_err());
+    }
+
+    #[test]
+    fn recognizes_github_repository_urls() {
+        assert_eq!(
+            normalize_github_url("git+https://github.com/acme/demo.git").as_deref(),
+            Some("https://github.com/acme/demo")
+        );
+        assert_eq!(normalize_github_url("https://gitlab.com/acme/demo"), None);
+    }
 }

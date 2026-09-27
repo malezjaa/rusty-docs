@@ -18,6 +18,10 @@ use crate::{
     terminal::Terminal,
 };
 
+pub(crate) const SIGNATURE_LINK_START: char = '\u{e000}';
+pub(crate) const SIGNATURE_LINK_SEPARATOR: char = '\u{e001}';
+pub(crate) const SIGNATURE_LINK_END: char = '\u{e002}';
+
 #[derive(Clone, Debug)]
 pub struct ApiPage {
     pub relative_path: PathBuf,
@@ -59,20 +63,7 @@ pub enum DocLinkTarget {
 }
 
 pub(crate) fn member_anchor(kind: &str, name: &str, id: u64) -> String {
-    let mut slug = String::new();
-    for character in name.chars() {
-        if character.is_ascii_alphanumeric() {
-            slug.push(character.to_ascii_lowercase());
-        } else if !slug.is_empty() && !slug.ends_with('-') {
-            slug.push('-');
-        }
-    }
-    while slug.ends_with('-') {
-        slug.pop();
-    }
-    if slug.is_empty() {
-        slug.push_str("item");
-    }
+    let slug = crate::formatting::slug(name, "item");
     format!("api-{kind}-{slug}-{id}")
 }
 

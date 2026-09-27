@@ -10,7 +10,14 @@ use crate::metadata::Package;
 
 use super::{ApiPage, DocLinkTarget, SignatureLinkTarget, members, signature, text};
 
-type PendingPage<'a> = (String, String, String, Vec<String>, &'a Value, String);
+struct PendingPage<'a> {
+    kind: String,
+    name: String,
+    rust_path: String,
+    segments: Vec<String>,
+    item: &'a Value,
+    rustdoc_id: String,
+}
 
 pub(super) fn render_pages(
     json: &Value,
@@ -66,14 +73,14 @@ pub(super) fn render_pages(
             .and_then(Value::as_str)
             .unwrap_or_else(|| names.last().map(String::as_str).unwrap_or("item"));
         let rust_path = names.join("::");
-        pending.push((
-            kind.to_owned(),
-            name.to_owned(),
+        pending.push(PendingPage {
+            kind: kind.to_owned(),
+            name: name.to_owned(),
             rust_path,
-            names,
+            segments: names,
             item,
-            id.clone(),
-        ));
+            rustdoc_id: id.clone(),
+        });
     }
 
     if let Some(root_id) = root_id.as_deref()
@@ -87,43 +94,43 @@ pub(super) fn render_pages(
         collect_reexports(root, &[root_name], index, &mut pending);
     }
 
-    pending.sort_by(|left, right| left.2.cmp(&right.2).then(left.0.cmp(&right.0)));
+    pending.sort_by(|left, right| {
+        left.rust_path
+            .cmp(&right.rust_path)
+            .then(left.kind.cmp(&right.kind))
+    });
     let mut reserved = HashSet::new();
-    for (kind, name, rust_path, names, item, rustdoc_id) in pending {
+    for pending_page in pending {
+        let PendingPage {
+            kind,
+            name,
+            rust_path,
+            segments,
+            item,
+            rustdoc_id,
+        } = pending_page;
         if !is_supported_kind(&kind) {
             continue;
         }
 
-        let mut relative_path = if kind == "module" {
-            let mut path = target_root.to_path_buf();
-            for segment in names.iter().skip(1) {
-                path.push(text::slug(segment));
+        let relative_path = if kind == "module" {
+            let mut relative_path = target_root.to_path_buf();
+            for segment in segments.iter().skip(1) {
+                relative_path.push(text::slug(segment));
             }
-            path.join("index.mdx")
+            relative_path.join("index.mdx")
         } else {
-            let mut path = target_root.to_path_buf();
-            for segment in names.iter().skip(1).take(names.len().saturating_sub(2)) {
-                path.push(text::slug(segment));
+            let mut relative_path = target_root.to_path_buf();
+            for segment in segments
+                .iter()
+                .skip(1)
+                .take(segments.len().saturating_sub(2))
+            {
+                relative_path.push(text::slug(segment));
             }
-            path.join(format!("{}.mdx", text::slug(&name)))
+            relative_path.join(format!("{}.mdx", text::slug(&name)))
         };
-
-        if !reserved.insert(relative_path.clone()) {
-            let parent = relative_path
-                .parent()
-                .unwrap_or_else(|| Path::new("."))
-                .to_path_buf();
-            let filename = relative_path
-                .file_stem()
-                .and_then(|value| value.to_str())
-                .unwrap_or("item")
-                .to_owned();
-            relative_path = parent.join(format!("{filename}--{kind}.mdx"));
-            if !reserved.insert(relative_path.clone()) {
-                relative_path = parent.join(format!("{filename}--{kind}-{}.mdx", item["id"]));
-                reserved.insert(relative_path.clone());
-            }
-        }
+        let relative_path = reserve_page_path(relative_path, &kind, item, &mut reserved);
 
         let title = name.clone();
         let docs = item.get("docs").and_then(Value::as_str).unwrap_or("");
@@ -179,6 +186,32 @@ pub(super) fn render_pages(
     }
 
     Ok((pages.into_values().collect(), signature_targets))
+}
+
+fn reserve_page_path(
+    preferred: PathBuf,
+    kind: &str,
+    item: &Value,
+    reserved: &mut HashSet<PathBuf>,
+) -> PathBuf {
+    if reserved.insert(preferred.clone()) {
+        return preferred;
+    }
+
+    let parent = preferred.parent().unwrap_or_else(|| Path::new("."));
+    let stem = preferred
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("item");
+    let with_kind = parent.join(format!("{stem}--{kind}.mdx"));
+    if reserved.insert(with_kind.clone()) {
+        return with_kind;
+    }
+
+    let id = item.get("id").and_then(Value::as_u64).unwrap_or(0);
+    let with_id = parent.join(format!("{stem}--{kind}-{id}.mdx"));
+    reserved.insert(with_id.clone());
+    with_id
 }
 
 fn resolve_external_doc_links(
@@ -282,26 +315,31 @@ fn signature_link_targets(
 }
 
 fn rustdoc_url(crate_name: &str, path: &[&str], kind: &str) -> Option<String> {
-    let root_url = if is_rustdoc_std_crate(crate_name) {
-        "https://doc.rust-lang.org/nightly".to_owned()
-    } else {
-        format!("https://docs.rs/{crate_name}/latest")
-    };
+    let root_url = rustdoc_root_url(crate_name, None);
+    rustdoc_item_url(&root_url, path, kind)
+}
+
+fn rustdoc_root_url(crate_name: &str, configured_root: Option<&str>) -> String {
+    if is_rustdoc_std_crate(crate_name) {
+        return "https://doc.rust-lang.org/nightly".to_owned();
+    }
+    configured_root
+        .map(|url| url.trim_end_matches('/'))
+        .filter(|url| url.starts_with("https://") || url.starts_with("http://"))
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("https://docs.rs/{crate_name}/latest"))
+}
+
+fn rustdoc_item_url(root_url: &str, path: &[&str], kind: &str) -> Option<String> {
     let item_name = path.last()?;
-    if kind == "module" {
-        return Some(format!("{root_url}/{}/index.html", path.join("/")));
+    match kind {
+        "module" => Some(format!("{root_url}/{}/index.html", path.join("/"))),
+        "primitive" | "keyword" => {
+            let crate_name = path.first()?;
+            Some(format!("{root_url}/{crate_name}/{kind}.{item_name}.html"))
+        }
+        _ => item_page_url(root_url, path, kind, item_name),
     }
-    if kind == "primitive" {
-        let crate_name = path.first()?;
-        return Some(format!(
-            "{root_url}/{crate_name}/primitive.{item_name}.html"
-        ));
-    }
-    if kind == "keyword" {
-        let crate_name = path.first()?;
-        return Some(format!("{root_url}/{crate_name}/keyword.{item_name}.html"));
-    }
-    item_page_url(&root_url, path, kind, item_name)
 }
 
 fn is_rustdoc_std_crate(crate_name: &str) -> bool {
@@ -341,45 +379,19 @@ fn external_rustdoc_url(
     }
     let external_crate = external_crates?.get(&crate_id.to_string())?;
     let crate_name = external_crate.get("name").and_then(Value::as_str)?;
-    let root_url = if is_rustdoc_std_crate(crate_name) {
-        "https://doc.rust-lang.org/nightly".to_owned()
-    } else {
-        let configured_root = external_crate
-            .get("html_root_url")
-            .and_then(Value::as_str)
-            .map(|url| url.trim_end_matches('/'))
-            .filter(|url| url.starts_with("https://") || url.starts_with("http://"));
-        configured_root
-            .map(str::to_owned)
-            .unwrap_or_else(|| format!("https://docs.rs/{crate_name}/latest"))
-    };
+    let root_url = rustdoc_root_url(
+        crate_name,
+        external_crate.get("html_root_url").and_then(Value::as_str),
+    );
     let path = item.get("path")?.as_array()?;
     let segments = path.iter().map(Value::as_str).collect::<Option<Vec<_>>>()?;
     let kind = item.get("kind")?.as_str()?;
     let item_name = segments.last()?;
     let rust_path = segments.join("::");
 
-    if kind == "module" {
+    if matches!(kind, "module" | "primitive" | "keyword") {
         return Some((
-            format!("{root_url}/{}/index.html", segments.join("/")),
-            kind.to_owned(),
-            crate_name.to_owned(),
-            rust_path,
-        ));
-    }
-    if kind == "primitive" {
-        let path_crate_name = segments.first()?;
-        return Some((
-            format!("{root_url}/{path_crate_name}/primitive.{item_name}.html"),
-            kind.to_owned(),
-            crate_name.to_owned(),
-            rust_path,
-        ));
-    }
-    if kind == "keyword" {
-        let path_crate_name = segments.first()?;
-        return Some((
-            format!("{root_url}/{path_crate_name}/keyword.{item_name}.html"),
+            rustdoc_item_url(&root_url, &segments, kind)?,
             kind.to_owned(),
             crate_name.to_owned(),
             rust_path,
@@ -416,7 +428,7 @@ fn external_rustdoc_url(
     }
 
     Some((
-        item_page_url(&root_url, &segments, kind, item_name)?,
+        rustdoc_item_url(&root_url, &segments, kind)?,
         kind.to_owned(),
         crate_name.to_owned(),
         rust_path,
@@ -500,13 +512,13 @@ fn collect_reexports<'a>(
             };
             let mut path = module_path.to_vec();
             path.push(name.to_owned());
-            pending.push((
-                "reexport".to_owned(),
-                name.to_owned(),
-                path.join("::"),
-                path,
+            pending.push(PendingPage {
+                kind: "reexport".to_owned(),
+                name: name.to_owned(),
+                rust_path: path.join("::"),
+                segments: path,
                 item,
-                use_item
+                rustdoc_id: use_item
                     .get("id")
                     .and_then(Value::as_u64)
                     .map(|id| id.to_string())
@@ -516,7 +528,7 @@ fn collect_reexports<'a>(
                             .unwrap_or(0)
                             .to_string()
                     }),
-            ));
+            });
         } else if inner.contains_key("module") {
             let Some(name) = item.get("name").and_then(Value::as_str) else {
                 continue;
@@ -525,5 +537,70 @@ fn collect_reexports<'a>(
             path.push(name.to_owned());
             collect_reexports(item, &path, index, pending);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn builds_urls_for_rustdoc_item_kinds() {
+        let root = "https://docs.rs/demo/latest";
+
+        assert_eq!(
+            rustdoc_item_url(root, &["demo", "widget"], "module").as_deref(),
+            Some("https://docs.rs/demo/latest/demo/widget/index.html")
+        );
+        assert_eq!(
+            rustdoc_item_url(root, &["demo", "Widget"], "struct").as_deref(),
+            Some("https://docs.rs/demo/latest/demo/struct.Widget.html")
+        );
+        assert_eq!(
+            rustdoc_item_url(root, &["core", "u32"], "primitive").as_deref(),
+            Some("https://docs.rs/demo/latest/core/primitive.u32.html")
+        );
+    }
+
+    #[test]
+    fn validates_configured_rustdoc_roots() {
+        assert_eq!(
+            rustdoc_root_url("demo", Some("https://example.com/docs/")),
+            "https://example.com/docs"
+        );
+        assert_eq!(
+            rustdoc_root_url("demo", Some("file:///tmp/docs")),
+            "https://docs.rs/demo/latest"
+        );
+        assert_eq!(
+            rustdoc_root_url("std", Some("https://example.com")),
+            "https://doc.rust-lang.org/nightly"
+        );
+    }
+
+    #[test]
+    fn disambiguates_page_paths_by_kind_then_id() {
+        let mut reserved = HashSet::new();
+        let preferred = PathBuf::from("api/demo/item.mdx");
+
+        assert_eq!(
+            reserve_page_path(
+                preferred.clone(),
+                "struct",
+                &json!({"id": 1}),
+                &mut reserved
+            ),
+            preferred
+        );
+        assert_eq!(
+            reserve_page_path(preferred.clone(), "enum", &json!({"id": 2}), &mut reserved),
+            PathBuf::from("api/demo/item--enum.mdx")
+        );
+        assert_eq!(
+            reserve_page_path(preferred, "enum", &json!({"id": 3}), &mut reserved),
+            PathBuf::from("api/demo/item--enum-3.mdx")
+        );
     }
 }

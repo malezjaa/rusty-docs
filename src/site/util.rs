@@ -26,23 +26,24 @@ pub(super) fn page_route(path: &Path) -> String {
 }
 
 pub(super) fn slug(value: &str) -> String {
-    let mut slug = String::new();
-    let mut previous_dash = false;
-    for character in value.chars() {
-        if character.is_ascii_alphanumeric() {
-            slug.push(character.to_ascii_lowercase());
-            previous_dash = false;
-        } else if !previous_dash && !slug.is_empty() {
-            slug.push('-');
-            previous_dash = true;
-        }
-    }
-    while slug.ends_with('-') {
-        slug.pop();
-    }
-    if slug.is_empty() {
-        "package".to_owned()
-    } else {
-        slug
+    crate::formatting::slug(value, "package")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    #[test]
+    fn converts_markdown_paths_to_routes() {
+        assert_eq!(
+            page_route(Path::new("api/demo/index.mdx")),
+            "/docs/api/demo"
+        );
+        assert_eq!(
+            page_route(Path::new("api/demo/widget.md")),
+            "/docs/api/demo/widget"
+        );
     }
 }

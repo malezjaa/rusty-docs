@@ -1,6 +1,35 @@
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use super::{ApiTocItem, DocLinkGroup, DocLinkTarget, member_anchor, signature, text};
+
+struct MemberRenderer<'a> {
+    markdown: &'a mut String,
+    api_toc: Vec<ApiTocItem>,
+    heading_count: usize,
+    doc_links: &'a mut Vec<DocLinkGroup>,
+}
+
+struct ApiMember<'a> {
+    kind: &'a str,
+    name: &'a str,
+    signature: &'a str,
+    docs: Option<&'a str>,
+    parent_heading_level: usize,
+    toc_depth: usize,
+    item: Option<&'a Value>,
+    show_icon: bool,
+    shift_depth: usize,
+}
+
+struct RenderedMember<'a> {
+    kind: &'a str,
+    signature: &'a str,
+    docs: Option<&'a str>,
+    parent_heading_level: usize,
+    id: Option<&'a str>,
+    item: Option<&'a Value>,
+    show_icon: bool,
+}
 
 pub(super) fn doc_link_group(markdown: &str, item: &Value) -> DocLinkGroup {
     let links = item
@@ -28,517 +57,389 @@ pub(super) fn append_members(
     index: &serde_json::Map<String, Value>,
     doc_links: &mut Vec<DocLinkGroup>,
 ) -> Vec<ApiTocItem> {
-    let mut api_toc = Vec::new();
-    let mut heading_count = text::heading_count(markdown);
+    let mut renderer = MemberRenderer {
+        heading_count: text::heading_count(markdown),
+        markdown,
+        api_toc: Vec::new(),
+        doc_links,
+    };
     match kind {
-        "struct" | "union" => append_fields(
-            markdown,
-            item,
-            index,
-            kind,
-            &mut heading_count,
-            &mut api_toc,
-            doc_links,
-        ),
-        "enum" => append_variants(
-            markdown,
-            item,
-            index,
-            &mut heading_count,
-            &mut api_toc,
-            doc_links,
-        ),
-        "trait" => append_trait_members(
-            markdown,
-            item,
-            index,
-            &mut heading_count,
-            &mut api_toc,
-            doc_links,
-        ),
+        "struct" | "union" => renderer.append_fields(item, index, kind),
+        "enum" => renderer.append_variants(item, index),
+        "trait" => renderer.append_trait_members(item, index),
         _ => {}
     }
     if matches!(kind, "struct" | "enum" | "union") {
-        append_implementations(
-            markdown,
-            item,
-            index,
-            &mut heading_count,
-            &mut api_toc,
-            doc_links,
-        );
+        renderer.append_implementations(item, index);
     }
-    api_toc
+    renderer.api_toc
 }
 
-fn append_fields(
-    markdown: &mut String,
-    item: &Value,
-    index: &serde_json::Map<String, Value>,
-    kind: &str,
-    heading_count: &mut usize,
-    api_toc: &mut Vec<ApiTocItem>,
-    doc_links: &mut Vec<DocLinkGroup>,
-) {
-    let data = item.get("inner").and_then(|inner| inner.get(kind));
-    let shape = data.and_then(|data| data.get("kind"));
-    let plain_fields = shape
-        .and_then(|shape| shape.get("plain"))
-        .and_then(|plain| plain.get("fields"))
-        .and_then(Value::as_array);
-    let tuple_fields = shape
-        .and_then(|shape| shape.get("tuple"))
-        .and_then(Value::as_array);
-    let fields = plain_fields.or(tuple_fields);
-    let Some(fields) = fields else { return };
-    let mut rendered = Vec::new();
-    for (field_index, id) in fields.iter().enumerate() {
-        let Some(field) = signature::get_item(index, id) else {
-            continue;
-        };
-        if field.get("visibility").and_then(Value::as_str) != Some("public") {
-            continue;
+impl MemberRenderer<'_> {
+    fn append_fields(&mut self, item: &Value, index: &Map<String, Value>, kind: &str) {
+        let data = item.get("inner").and_then(|inner| inner.get(kind));
+        let shape = data.and_then(|data| data.get("kind"));
+        let plain_fields = shape
+            .and_then(|shape| shape.get("plain"))
+            .and_then(|plain| plain.get("fields"))
+            .and_then(Value::as_array);
+        let tuple_fields = shape
+            .and_then(|shape| shape.get("tuple"))
+            .and_then(Value::as_array);
+        let fields = plain_fields.or(tuple_fields);
+        let Some(fields) = fields else { return };
+        let mut rendered = Vec::new();
+        for (field_index, id) in fields.iter().enumerate() {
+            let Some(field) = signature::get_item(index, id) else {
+                continue;
+            };
+            if field.get("visibility").and_then(Value::as_str) != Some("public") {
+                continue;
+            }
+            let signature = if let Some(name) = field.get("name").and_then(Value::as_str) {
+                format!(
+                    "{}{name}: {}",
+                    signature::visibility(field),
+                    signature::field_type(field)
+                )
+            } else {
+                format!(
+                    "{}{}",
+                    signature::visibility(field),
+                    signature::field_type(field)
+                )
+            };
+            rendered.push((
+                field_index,
+                signature,
+                field.get("docs").and_then(Value::as_str),
+                field,
+            ));
         }
-        let signature = if let Some(name) = field.get("name").and_then(Value::as_str) {
-            format!(
-                "{}{name}: {}",
-                signature::visibility(field),
-                signature::field_type(field)
-            )
-        } else {
-            format!(
-                "{}{}",
-                signature::visibility(field),
-                signature::field_type(field)
-            )
-        };
-        rendered.push((
-            field_index,
-            signature,
-            field.get("docs").and_then(Value::as_str),
-            field,
-        ));
-    }
-    if rendered.is_empty() {
-        return;
-    }
-    markdown.push_str("## Fields\n\n");
-    *heading_count += 1;
-    for (field_index, signature, docs, field) in rendered {
-        let name = field
-            .get("name")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .unwrap_or_else(|| field_index.to_string());
-        append_api_toc_member(
-            markdown,
-            api_toc,
-            heading_count,
-            doc_links,
-            "field",
-            &name,
-            &signature,
-            docs,
-            2,
-            3,
-            Some(field),
-            true,
-            1,
-        );
-    }
-}
-
-fn append_variants(
-    markdown: &mut String,
-    item: &Value,
-    index: &serde_json::Map<String, Value>,
-    heading_count: &mut usize,
-    api_toc: &mut Vec<ApiTocItem>,
-    doc_links: &mut Vec<DocLinkGroup>,
-) {
-    let Some(variants) = item
-        .get("inner")
-        .and_then(|inner| inner.get("enum"))
-        .and_then(|data| data.get("variants"))
-        .and_then(Value::as_array)
-    else {
-        return;
-    };
-    let variants = variants
-        .iter()
-        .filter_map(|id| signature::get_item(index, id))
-        .collect::<Vec<_>>();
-    if variants.is_empty() {
-        return;
-    }
-    markdown.push_str("## Variants\n\n");
-    *heading_count += 1;
-    for variant in variants {
-        let name = variant
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or("variant");
-        let variant_signature = signature::variant_signature(name, variant, index);
-        append_api_toc_member(
-            markdown,
-            api_toc,
-            heading_count,
-            doc_links,
-            "variant",
-            name,
-            &variant_signature,
-            variant.get("docs").and_then(Value::as_str),
-            2,
-            3,
-            Some(variant),
-            true,
-            1,
-        );
-        append_documented_variant_fields(
-            markdown,
-            variant,
-            index,
-            heading_count,
-            api_toc,
-            doc_links,
-        );
-    }
-}
-
-fn append_documented_variant_fields(
-    markdown: &mut String,
-    variant: &Value,
-    index: &serde_json::Map<String, Value>,
-    heading_count: &mut usize,
-    api_toc: &mut Vec<ApiTocItem>,
-    doc_links: &mut Vec<DocLinkGroup>,
-) {
-    let shape = variant
-        .get("inner")
-        .and_then(|inner| inner.get("variant"))
-        .and_then(|data| data.get("kind"));
-    let fields = shape
-        .and_then(|shape| shape.get("struct"))
-        .and_then(|value| value.get("fields"))
-        .or_else(|| shape.and_then(|shape| shape.get("tuple")));
-    let Some(fields) = fields.and_then(Value::as_array) else {
-        return;
-    };
-    for (field_index, id) in fields.iter().enumerate() {
-        let Some(field) = signature::get_item(index, id) else {
-            continue;
-        };
-        let Some(docs) = field
-            .get("docs")
-            .and_then(Value::as_str)
-            .filter(|docs| !docs.trim().is_empty())
-        else {
-            continue;
-        };
-        let name = field
-            .get("name")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .unwrap_or_else(|| field_index.to_string());
-        append_api_toc_member(
-            markdown,
-            api_toc,
-            heading_count,
-            doc_links,
-            "field",
-            &name,
-            &name,
-            Some(docs),
-            3,
-            4,
-            Some(field),
-            true,
-            1,
-        );
-    }
-}
-
-fn append_trait_members(
-    markdown: &mut String,
-    item: &Value,
-    index: &serde_json::Map<String, Value>,
-    heading_count: &mut usize,
-    api_toc: &mut Vec<ApiTocItem>,
-    doc_links: &mut Vec<DocLinkGroup>,
-) {
-    let Some(items) = item
-        .get("inner")
-        .and_then(|inner| inner.get("trait"))
-        .and_then(|data| data.get("items"))
-        .and_then(Value::as_array)
-    else {
-        return;
-    };
-    let members = items
-        .iter()
-        .filter_map(|id| signature::get_item(index, id))
-        .collect::<Vec<_>>();
-    if members.is_empty() {
-        return;
-    }
-    markdown.push_str("## Required and provided items\n\n");
-    *heading_count += 1;
-    for member in members {
-        let Some(name) = member.get("name").and_then(Value::as_str) else {
-            continue;
-        };
-        let Some((member_kind, member_signature)) = impl_item_signature(name, member, index, false)
-        else {
-            continue;
-        };
-        append_api_toc_member(
-            markdown,
-            api_toc,
-            heading_count,
-            doc_links,
-            member_kind,
-            name,
-            &member_signature,
-            member.get("docs").and_then(Value::as_str),
-            2,
-            3,
-            Some(member),
-            true,
-            1,
-        );
-    }
-}
-
-fn append_implementations(
-    markdown: &mut String,
-    item: &Value,
-    index: &serde_json::Map<String, Value>,
-    heading_count: &mut usize,
-    api_toc: &mut Vec<ApiTocItem>,
-    doc_links: &mut Vec<DocLinkGroup>,
-) {
-    let Some(inner) = item.get("inner").and_then(Value::as_object) else {
-        return;
-    };
-    let Some((kind, data)) = inner
-        .iter()
-        .find(|(kind, _)| matches!(kind.as_str(), "struct" | "enum" | "union"))
-    else {
-        return;
-    };
-    let Some(impls) = data.get("impls").and_then(Value::as_array) else {
-        return;
-    };
-    let name = item.get("name").and_then(Value::as_str).unwrap_or("Self");
-    let data = inner.get(kind);
-    let self_type = format!(
-        "{name}{}",
-        signature::generic_params(data.and_then(|data| data.get("generics")))
-    );
-    let mut inherent = Vec::new();
-    let mut traits = Vec::new();
-    let mut auto_traits = Vec::new();
-    let mut blanket = Vec::new();
-    for impl_id in impls {
-        let Some(impl_item) = signature::get_item(index, impl_id) else {
-            continue;
-        };
-        let Some(implementation) = impl_item.get("inner").and_then(|inner| inner.get("impl"))
-        else {
-            continue;
-        };
-        if implementation
-            .get("blanket_impl")
-            .is_some_and(|value| !value.is_null())
-        {
-            blanket.push((impl_item, implementation));
-        } else if implementation.get("is_synthetic").and_then(Value::as_bool) == Some(true) {
-            auto_traits.push((impl_item, implementation));
-        } else if implementation
-            .get("trait")
-            .is_some_and(|value| !value.is_null())
-        {
-            traits.push((impl_item, implementation));
-        } else {
-            inherent.push((impl_item, implementation));
+        if rendered.is_empty() {
+            return;
         }
-    }
-
-    append_impl_group(
-        markdown,
-        "Implementations",
-        &inherent,
-        &self_type,
-        index,
-        true,
-        heading_count,
-        api_toc,
-        doc_links,
-    );
-    append_impl_group(
-        markdown,
-        "Trait Implementations",
-        &traits,
-        &self_type,
-        index,
-        false,
-        heading_count,
-        api_toc,
-        doc_links,
-    );
-    append_impl_group(
-        markdown,
-        "Auto Trait Implementations",
-        &auto_traits,
-        &self_type,
-        index,
-        false,
-        heading_count,
-        api_toc,
-        doc_links,
-    );
-    append_impl_group(
-        markdown,
-        "Blanket Implementations",
-        &blanket,
-        &self_type,
-        index,
-        false,
-        heading_count,
-        api_toc,
-        doc_links,
-    );
-}
-
-fn append_impl_group(
-    markdown: &mut String,
-    heading: &str,
-    implementations: &[(&Value, &Value)],
-    self_type: &str,
-    index: &serde_json::Map<String, Value>,
-    inherent: bool,
-    heading_count: &mut usize,
-    api_toc: &mut Vec<ApiTocItem>,
-    doc_links: &mut Vec<DocLinkGroup>,
-) {
-    if implementations.is_empty() {
-        return;
-    }
-
-    let mut implementations = implementations.to_vec();
-    implementations.sort_by(|left, right| {
-        implementation_signature(left.1, self_type, false)
-            .cmp(&implementation_signature(right.1, self_type, false))
-    });
-    markdown.push_str(&format!("## {heading}\n\n"));
-    *heading_count += 1;
-    for (impl_item, implementation) in implementations {
-        let signature = implementation_signature(implementation, self_type, true);
-        let trait_name = implementation
-            .get("trait")
-            .filter(|value| !value.is_null())
-            .map(signature::trait_name);
-        let trait_anchor = trait_name.as_ref().map(|name| {
-            member_anchor(
-                "trait",
-                name,
-                item_id(impl_item).unwrap_or(api_toc.len() as u64),
-            )
-        });
-        if let (Some(trait_name), Some(trait_anchor)) = (&trait_name, &trait_anchor) {
-            api_toc.push(ApiTocItem {
-                title: trait_name.clone(),
-                url: format!("#{trait_anchor}"),
-                depth: 3,
-                insert_at: *heading_count,
-                shift_next: 0,
-                shift_depth: 0,
+        self.markdown.push_str("## Fields\n\n");
+        self.heading_count += 1;
+        for (field_index, signature, docs, field) in rendered {
+            let name = field
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .unwrap_or_else(|| field_index.to_string());
+            self.append_api_toc_member(ApiMember {
+                kind: "field",
+                name: &name,
+                signature: &signature,
+                docs,
+                parent_heading_level: 2,
+                toc_depth: 3,
+                item: Some(field),
+                show_icon: true,
+                shift_depth: 1,
             });
         }
-        let mut methods = implementation
-            .get("items")
+    }
+
+    fn append_variants(&mut self, item: &Value, index: &Map<String, Value>) {
+        let Some(variants) = item
+            .get("inner")
+            .and_then(|inner| inner.get("enum"))
+            .and_then(|data| data.get("variants"))
             .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|method_id| signature::get_item(index, method_id))
-            .filter(|method| {
-                !inherent || method.get("visibility").and_then(Value::as_str) == Some("public")
-            })
+        else {
+            return;
+        };
+        let variants = variants
+            .iter()
+            .filter_map(|id| signature::get_item(index, id))
             .collect::<Vec<_>>();
-        methods.sort_by(|left, right| {
-            left.get("name")
+        if variants.is_empty() {
+            return;
+        }
+        self.markdown.push_str("## Variants\n\n");
+        self.heading_count += 1;
+        for variant in variants {
+            let name = variant
+                .get("name")
                 .and_then(Value::as_str)
-                .cmp(&right.get("name").and_then(Value::as_str))
-        });
-        methods.dedup_by(|left, right| left.get("id") == right.get("id"));
+                .unwrap_or("variant");
+            let variant_signature = signature::variant_signature(name, variant, index);
+            self.append_api_toc_member(ApiMember {
+                kind: "variant",
+                name,
+                signature: &variant_signature,
+                docs: variant.get("docs").and_then(Value::as_str),
+                parent_heading_level: 2,
+                toc_depth: 3,
+                item: Some(variant),
+                show_icon: true,
+                shift_depth: 1,
+            });
+            self.append_documented_variant_fields(variant, index);
+        }
+    }
 
-        let members = methods
-            .into_iter()
-            .filter_map(|method| {
-                let name = method.get("name").and_then(Value::as_str)?;
-                let (member_kind, signature) = impl_item_signature(name, method, index, inherent)?;
-                Some((
-                    member_kind,
-                    name.to_owned(),
-                    signature,
-                    method.get("docs").and_then(Value::as_str),
-                    method,
-                ))
-            })
+    fn append_documented_variant_fields(&mut self, variant: &Value, index: &Map<String, Value>) {
+        let shape = variant
+            .get("inner")
+            .and_then(|inner| inner.get("variant"))
+            .and_then(|data| data.get("kind"));
+        let fields = shape
+            .and_then(|shape| shape.get("struct"))
+            .and_then(|value| value.get("fields"))
+            .or_else(|| shape.and_then(|shape| shape.get("tuple")));
+        let Some(fields) = fields.and_then(Value::as_array) else {
+            return;
+        };
+        for (field_index, id) in fields.iter().enumerate() {
+            let Some(field) = signature::get_item(index, id) else {
+                continue;
+            };
+            let Some(docs) = field
+                .get("docs")
+                .and_then(Value::as_str)
+                .filter(|docs| !docs.trim().is_empty())
+            else {
+                continue;
+            };
+            let name = field
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .unwrap_or_else(|| field_index.to_string());
+            self.append_api_toc_member(ApiMember {
+                kind: "field",
+                name: &name,
+                signature: &name,
+                docs: Some(docs),
+                parent_heading_level: 3,
+                toc_depth: 4,
+                item: Some(field),
+                show_icon: true,
+                shift_depth: 1,
+            });
+        }
+    }
+
+    fn append_trait_members(&mut self, item: &Value, index: &Map<String, Value>) {
+        let Some(items) = item
+            .get("inner")
+            .and_then(|inner| inner.get("trait"))
+            .and_then(|data| data.get("items"))
+            .and_then(Value::as_array)
+        else {
+            return;
+        };
+        let members = items
+            .iter()
+            .filter_map(|id| signature::get_item(index, id))
             .collect::<Vec<_>>();
-
         if members.is_empty() {
-            if let Some(trait_anchor) = trait_anchor.as_deref() {
-                append_api_member_without_icon_with_id(
-                    markdown,
-                    "implementation",
-                    &signature,
-                    None,
-                    2,
-                    Some(trait_anchor),
-                    None,
-                    doc_links,
-                );
+            return;
+        }
+        self.markdown.push_str("## Required and provided items\n\n");
+        self.heading_count += 1;
+        for member in members {
+            let Some(name) = member.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some((member_kind, member_signature)) =
+                impl_item_signature(name, member, index, false)
+            else {
+                continue;
+            };
+            self.append_api_toc_member(ApiMember {
+                kind: member_kind,
+                name,
+                signature: &member_signature,
+                docs: member.get("docs").and_then(Value::as_str),
+                parent_heading_level: 2,
+                toc_depth: 3,
+                item: Some(member),
+                show_icon: true,
+                shift_depth: 1,
+            });
+        }
+    }
+
+    fn append_implementations(&mut self, item: &Value, index: &Map<String, Value>) {
+        let Some(inner) = item.get("inner").and_then(Value::as_object) else {
+            return;
+        };
+        let Some((kind, data)) = inner
+            .iter()
+            .find(|(kind, _)| matches!(kind.as_str(), "struct" | "enum" | "union"))
+        else {
+            return;
+        };
+        let Some(impls) = data.get("impls").and_then(Value::as_array) else {
+            return;
+        };
+        let name = item.get("name").and_then(Value::as_str).unwrap_or("Self");
+        let data = inner.get(kind);
+        let self_type = format!(
+            "{name}{}",
+            signature::generic_params(data.and_then(|data| data.get("generics")))
+        );
+        let mut inherent = Vec::new();
+        let mut traits = Vec::new();
+        let mut auto_traits = Vec::new();
+        let mut blanket = Vec::new();
+        for impl_id in impls {
+            let Some(impl_item) = signature::get_item(index, impl_id) else {
+                continue;
+            };
+            let Some(implementation) = impl_item.get("inner").and_then(|inner| inner.get("impl"))
+            else {
+                continue;
+            };
+            if implementation
+                .get("blanket_impl")
+                .is_some_and(|value| !value.is_null())
+            {
+                blanket.push((impl_item, implementation));
+            } else if implementation.get("is_synthetic").and_then(Value::as_bool) == Some(true) {
+                auto_traits.push((impl_item, implementation));
+            } else if implementation
+                .get("trait")
+                .is_some_and(|value| !value.is_null())
+            {
+                traits.push((impl_item, implementation));
             } else {
-                append_api_member_without_icon(
-                    markdown,
-                    "implementation",
-                    &signature,
-                    None,
-                    2,
-                    None,
-                    doc_links,
-                );
+                inherent.push((impl_item, implementation));
             }
-            continue;
         }
 
-        markdown.push_str(&format!(
-            "<ApiImpl signature={}{}>\n\n",
-            mdx_string(&signature),
-            trait_anchor
-                .as_deref()
-                .map(|anchor| format!(" id={}", mdx_string(anchor)))
-                .unwrap_or_default()
-        ));
-        for (member_kind, name, signature, docs, method) in members {
-            append_api_toc_member(
-                markdown,
-                api_toc,
-                heading_count,
-                doc_links,
-                member_kind,
-                &name,
-                &signature,
-                docs,
-                2,
-                if inherent { 3 } else { 4 },
-                Some(method),
-                false,
-                if inherent { 1 } else { 2 },
-            );
+        self.append_impl_group("Implementations", &inherent, &self_type, index, true);
+        self.append_impl_group("Trait Implementations", &traits, &self_type, index, false);
+        self.append_impl_group(
+            "Auto Trait Implementations",
+            &auto_traits,
+            &self_type,
+            index,
+            false,
+        );
+        self.append_impl_group(
+            "Blanket Implementations",
+            &blanket,
+            &self_type,
+            index,
+            false,
+        );
+    }
+
+    fn append_impl_group(
+        &mut self,
+        heading: &str,
+        implementations: &[(&Value, &Value)],
+        self_type: &str,
+        index: &Map<String, Value>,
+        inherent: bool,
+    ) {
+        if implementations.is_empty() {
+            return;
         }
-        markdown.push_str("</ApiImpl>\n\n");
+
+        let mut implementations = implementations.to_vec();
+        implementations.sort_by(|left, right| {
+            implementation_signature(left.1, self_type, false)
+                .cmp(&implementation_signature(right.1, self_type, false))
+        });
+        self.markdown.push_str(&format!("## {heading}\n\n"));
+        self.heading_count += 1;
+        for (impl_item, implementation) in implementations {
+            let signature = implementation_signature(implementation, self_type, true);
+            let trait_name = implementation
+                .get("trait")
+                .filter(|value| !value.is_null())
+                .map(signature::trait_name);
+            let trait_anchor = trait_name.as_ref().map(|name| {
+                member_anchor(
+                    "trait",
+                    name,
+                    item_id(impl_item).unwrap_or(self.api_toc.len() as u64),
+                )
+            });
+            if let (Some(trait_name), Some(trait_anchor)) = (&trait_name, &trait_anchor) {
+                self.api_toc.push(ApiTocItem {
+                    title: trait_name.clone(),
+                    url: format!("#{trait_anchor}"),
+                    depth: 3,
+                    insert_at: self.heading_count,
+                    shift_next: 0,
+                    shift_depth: 0,
+                });
+            }
+            let mut methods = implementation
+                .get("items")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|method_id| signature::get_item(index, method_id))
+                .filter(|method| {
+                    !inherent || method.get("visibility").and_then(Value::as_str) == Some("public")
+                })
+                .collect::<Vec<_>>();
+            methods.sort_by(|left, right| {
+                left.get("name")
+                    .and_then(Value::as_str)
+                    .cmp(&right.get("name").and_then(Value::as_str))
+            });
+            methods.dedup_by(|left, right| left.get("id") == right.get("id"));
+
+            let members = methods
+                .into_iter()
+                .filter_map(|method| {
+                    let name = method.get("name").and_then(Value::as_str)?;
+                    let (member_kind, signature) =
+                        impl_item_signature(name, method, index, inherent)?;
+                    Some((
+                        member_kind,
+                        name.to_owned(),
+                        signature,
+                        method.get("docs").and_then(Value::as_str),
+                        method,
+                    ))
+                })
+                .collect::<Vec<_>>();
+
+            if members.is_empty() {
+                self.append_api_member(RenderedMember {
+                    kind: "implementation",
+                    signature: &signature,
+                    docs: None,
+                    parent_heading_level: 2,
+                    id: trait_anchor.as_deref(),
+                    item: None,
+                    show_icon: false,
+                });
+                continue;
+            }
+
+            self.markdown.push_str(&format!(
+                "<ApiImpl signature={}{}>\n\n",
+                mdx_string(&signature),
+                trait_anchor
+                    .as_deref()
+                    .map(|anchor| format!(" id={}", mdx_string(anchor)))
+                    .unwrap_or_default()
+            ));
+            for (member_kind, name, signature, docs, method) in members {
+                self.append_api_toc_member(ApiMember {
+                    kind: member_kind,
+                    name: &name,
+                    signature: &signature,
+                    docs,
+                    parent_heading_level: 2,
+                    toc_depth: if inherent { 3 } else { 4 },
+                    item: Some(method),
+                    show_icon: false,
+                    shift_depth: if inherent { 1 } else { 2 },
+                });
+            }
+            self.markdown.push_str("</ApiImpl>\n\n");
+        }
     }
 }
 
@@ -549,7 +450,7 @@ fn item_id(item: &Value) -> Option<u64> {
 fn impl_item_signature(
     name: &str,
     item: &Value,
-    index: &serde_json::Map<String, Value>,
+    index: &Map<String, Value>,
     inherent: bool,
 ) -> Option<(&'static str, String)> {
     let inner = item.get("inner")?.as_object()?;
@@ -573,47 +474,77 @@ fn impl_item_signature(
     None
 }
 
-fn append_api_toc_member(
-    markdown: &mut String,
-    api_toc: &mut Vec<ApiTocItem>,
-    heading_count: &mut usize,
-    doc_links: &mut Vec<DocLinkGroup>,
-    kind: &str,
-    name: &str,
-    member_signature: &str,
-    docs: Option<&str>,
-    parent_heading_level: usize,
-    depth: usize,
-    item: Option<&Value>,
-    show_icon: bool,
-    shift_depth: usize,
-) {
-    let id = member_anchor(
-        "member",
-        name,
-        item.and_then(item_id).unwrap_or(api_toc.len() as u64),
-    );
-    let doc_heading_count = docs.map(text::heading_count).unwrap_or_default();
-    api_toc.push(ApiTocItem {
-        title: name.to_owned(),
-        url: format!("#{id}"),
-        depth,
-        insert_at: *heading_count,
-        shift_next: doc_heading_count,
-        shift_depth,
-    });
-    *heading_count += doc_heading_count;
-    append_api_member_with_icon(
-        markdown,
-        kind,
-        member_signature,
-        docs,
-        show_icon,
-        parent_heading_level,
-        Some(&id),
-        item,
-        doc_links,
-    );
+impl MemberRenderer<'_> {
+    fn append_api_toc_member(&mut self, member: ApiMember<'_>) {
+        let ApiMember {
+            kind,
+            name,
+            signature,
+            docs,
+            parent_heading_level,
+            toc_depth,
+            item,
+            show_icon,
+            shift_depth,
+        } = member;
+        let id = member_anchor(
+            "member",
+            name,
+            item.and_then(item_id).unwrap_or(self.api_toc.len() as u64),
+        );
+        let doc_heading_count = docs.map(text::heading_count).unwrap_or_default();
+        self.api_toc.push(ApiTocItem {
+            title: name.to_owned(),
+            url: format!("#{id}"),
+            depth: toc_depth,
+            insert_at: self.heading_count,
+            shift_next: doc_heading_count,
+            shift_depth,
+        });
+        self.heading_count += doc_heading_count;
+        self.append_api_member(RenderedMember {
+            kind,
+            signature,
+            docs,
+            parent_heading_level,
+            id: Some(&id),
+            item,
+            show_icon,
+        });
+    }
+
+    fn append_api_member(&mut self, member: RenderedMember<'_>) {
+        let RenderedMember {
+            kind,
+            signature,
+            docs,
+            parent_heading_level,
+            id,
+            item,
+            show_icon,
+        } = member;
+        let kind = mdx_string(kind);
+        let signature = mdx_string(signature);
+        let icon_attribute = if show_icon { "" } else { " showIcon={false}" };
+        let id_attribute = id
+            .map(|id| format!(" id={}", mdx_string(id)))
+            .unwrap_or_default();
+        if let Some(docs) = docs.filter(|docs| !docs.trim().is_empty()) {
+            let rendered_docs = text::shift_doc_headings(docs.trim(), parent_heading_level);
+            if let Some(item) = item {
+                self.doc_links.push(doc_link_group(&rendered_docs, item));
+            }
+            self.markdown.push_str(&format!(
+                "<ApiMember kind={kind} signature={signature}{icon_attribute}{id_attribute}>\n\n"
+            ));
+            self.markdown.push_str(&rendered_docs);
+            self.markdown.push_str("\n\n</ApiMember>\n\n");
+        } else {
+            self.markdown.push_str(&format!(
+                "<ApiMember kind={kind} signature={signature}{icon_attribute}{id_attribute} />\n\n"
+            ));
+        }
+    }
 }
 
 fn implementation_signature(implementation: &Value, self_type: &str, link_trait: bool) -> String {
@@ -642,85 +573,76 @@ fn implementation_signature(implementation: &Value, self_type: &str, link_trait:
     signature
 }
 
-fn append_api_member_without_icon(
-    markdown: &mut String,
-    kind: &str,
-    signature: &str,
-    docs: Option<&str>,
-    parent_heading_level: usize,
-    item: Option<&Value>,
-    doc_links: &mut Vec<DocLinkGroup>,
-) {
-    append_api_member_with_icon(
-        markdown,
-        kind,
-        signature,
-        docs,
-        false,
-        parent_heading_level,
-        None,
-        item,
-        doc_links,
-    );
-}
-
-fn append_api_member_without_icon_with_id(
-    markdown: &mut String,
-    kind: &str,
-    signature: &str,
-    docs: Option<&str>,
-    parent_heading_level: usize,
-    id: Option<&str>,
-    item: Option<&Value>,
-    doc_links: &mut Vec<DocLinkGroup>,
-) {
-    append_api_member_with_icon(
-        markdown,
-        kind,
-        signature,
-        docs,
-        false,
-        parent_heading_level,
-        id,
-        item,
-        doc_links,
-    );
-}
-
-fn append_api_member_with_icon(
-    markdown: &mut String,
-    kind: &str,
-    signature: &str,
-    docs: Option<&str>,
-    show_icon: bool,
-    parent_heading_level: usize,
-    id: Option<&str>,
-    item: Option<&Value>,
-    doc_links: &mut Vec<DocLinkGroup>,
-) {
-    let kind = mdx_string(kind);
-    let signature = mdx_string(signature);
-    let icon_attribute = if show_icon { "" } else { " showIcon={false}" };
-    let id_attribute = id
-        .map(|id| format!(" id={}", mdx_string(id)))
-        .unwrap_or_default();
-    if let Some(docs) = docs.filter(|docs| !docs.trim().is_empty()) {
-        let rendered_docs = text::shift_doc_headings(docs.trim(), parent_heading_level);
-        if let Some(item) = item {
-            doc_links.push(doc_link_group(&rendered_docs, item));
-        }
-        markdown.push_str(&format!(
-            "<ApiMember kind={kind} signature={signature}{icon_attribute}{id_attribute}>\n\n"
-        ));
-        markdown.push_str(&rendered_docs);
-        markdown.push_str("\n\n</ApiMember>\n\n");
-    } else {
-        markdown.push_str(&format!(
-            "<ApiMember kind={kind} signature={signature}{icon_attribute}{id_attribute} />\n\n"
-        ));
-    }
-}
-
 fn mdx_string(value: &str) -> String {
     format!("{{{}}}", text::yaml_quote(value))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn renders_public_struct_fields_and_toc_entries() {
+        let item = json!({
+            "inner": {
+                "struct": {
+                    "kind": { "plain": { "fields": [1] } },
+                    "impls": []
+                }
+            }
+        });
+        let mut index = Map::new();
+        index.insert(
+            "1".to_owned(),
+            json!({
+                "id": 1,
+                "name": "value",
+                "visibility": "public",
+                "docs": "Stored value.",
+                "inner": { "struct_field": { "primitive": "u32" } }
+            }),
+        );
+        let mut markdown = String::new();
+        let mut doc_links = Vec::new();
+
+        let toc = append_members(&mut markdown, "struct", &item, &index, &mut doc_links);
+
+        assert!(markdown.starts_with("## Fields\n\n"));
+        assert!(markdown.contains("Stored value."));
+        assert_eq!(toc.len(), 1);
+        assert_eq!(toc[0].title, "value");
+        assert_eq!(toc[0].url, "#api-member-value-1");
+        assert_eq!(doc_links.len(), 1);
+    }
+
+    #[test]
+    fn skips_private_struct_fields() {
+        let item = json!({
+            "inner": {
+                "struct": {
+                    "kind": { "plain": { "fields": [1] } },
+                    "impls": []
+                }
+            }
+        });
+        let mut index = Map::new();
+        index.insert(
+            "1".to_owned(),
+            json!({
+                "id": 1,
+                "name": "secret",
+                "visibility": "default",
+                "inner": { "struct_field": { "primitive": "u32" } }
+            }),
+        );
+        let mut markdown = String::new();
+        let mut doc_links = Vec::new();
+
+        let toc = append_members(&mut markdown, "struct", &item, &index, &mut doc_links);
+
+        assert!(markdown.is_empty());
+        assert!(toc.is_empty());
+    }
 }

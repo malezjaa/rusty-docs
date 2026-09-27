@@ -1,6 +1,7 @@
 mod app;
 mod cli;
 mod config;
+mod formatting;
 mod metadata;
 mod rustdoc;
 mod site;

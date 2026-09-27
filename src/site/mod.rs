@@ -73,6 +73,62 @@ pub fn generate_and_build(
     }
 
     template::ensure_template(&site_dir)?;
+    let site_config = create_site_config(config, targets)?;
+
+    let stage = terminal.stage("Writing site metadata and syncing content");
+    metadata::write_json(&site_dir.join("rusty-docs-site.json"), &site_config)?;
+    content::sync_content(&content_dir, &content_target)?;
+    metadata::write_markdown(
+        &content_target.join("index.mdx"),
+        &metadata::docs_index(&site_config.title, &site_config.description, targets),
+    )?;
+    if targets.iter().any(|target| target.target_kind.is_library()) {
+        metadata::write_markdown(
+            &content_target.join("api/index.md"),
+            &metadata::api_index(targets),
+        )?;
+    }
+    stage.finish("Wrote site metadata and synced content");
+
+    let api_page_count = targets
+        .iter()
+        .map(|target| target.pages.len() + 1)
+        .sum::<usize>();
+    let workspace_routes = api_pages::WorkspaceRoutes::from_targets(targets);
+    let progress = terminal.progress(api_page_count as u64, "Generating reference pages");
+    for target in targets {
+        api_pages::write_target_pages(
+            &content_target,
+            target,
+            &workspace_routes,
+            progress.as_ref(),
+        )?;
+    }
+    if let Some(progress) = progress {
+        let page_count = terminal.highlight(&api_page_count.to_string());
+        terminal.finish_progress(progress, &format!("Generated {page_count} reference pages"));
+    }
+
+    npm::check_node_tools()?;
+    npm::install_dependencies_if_needed(&site_dir, terminal)?;
+    let build_stage = terminal.stage("Building static Next.js site");
+    npm::run_npm(&site_dir, &["run", "build"], terminal)?;
+    let static_dir = site_dir.join("out");
+    if !static_dir.join("index.html").is_file() {
+        bail!(
+            "Next.js completed, but the static site was not found at {}",
+            static_dir.display()
+        );
+    }
+    build_stage.finish("Static site ready");
+
+    Ok(BuildResult {
+        site_dir,
+        static_dir,
+    })
+}
+
+fn create_site_config(config: &Config, targets: &[ExtractedTarget]) -> Result<SiteConfig> {
     let base_path = metadata::normalize_base_path(&config.site.base_path)?;
     let site_url = config
         .site
@@ -127,69 +183,14 @@ pub fn generate_and_build(
             items
         })
         .collect();
-    let site_config = SiteConfig {
-        title: title.clone(),
-        description: description.clone(),
-        base_path: base_path.clone(),
+    Ok(SiteConfig {
+        title,
+        description,
+        base_path,
         content_position: config.site.content_position.as_str().to_owned(),
         site_url,
         repository_url,
         packages: package_summaries,
         api_items,
-    };
-
-    let stage = terminal.stage("Writing site metadata and syncing content");
-    metadata::write_json(&site_dir.join("rusty-docs-site.json"), &site_config)?;
-    content::sync_content(&content_dir, &content_target)?;
-    metadata::write_markdown(
-        &content_target.join("index.mdx"),
-        &metadata::docs_index(&title, &description, targets),
-    )?;
-    if targets.iter().any(|target| target.target_kind.is_library()) {
-        metadata::write_markdown(
-            &content_target.join("api/index.md"),
-            &metadata::api_index(targets),
-        )?;
-    }
-    stage.finish("Wrote site metadata and synced content");
-
-    let api_page_count = targets
-        .iter()
-        .map(|target| target.pages.len() + 1)
-        .sum::<usize>();
-    let mut workspace_routes = std::collections::HashMap::new();
-    for target in targets {
-        api_pages::add_workspace_routes(target, &mut workspace_routes);
-    }
-    let progress = terminal.progress(api_page_count as u64, "Generating reference pages");
-    for target in targets {
-        api_pages::write_target_pages(
-            &content_target,
-            target,
-            &workspace_routes,
-            progress.as_ref(),
-        )?;
-    }
-    if let Some(progress) = progress {
-        let page_count = terminal.highlight(&api_page_count.to_string());
-        terminal.finish_progress(progress, &format!("Generated {page_count} reference pages"));
-    }
-
-    npm::check_node_tools()?;
-    npm::install_dependencies_if_needed(&site_dir, terminal)?;
-    let build_stage = terminal.stage("Building static Next.js site");
-    npm::run_npm(&site_dir, &["run", "build"], terminal)?;
-    let static_dir = site_dir.join("out");
-    if !static_dir.join("index.html").is_file() {
-        bail!(
-            "Next.js completed, but the static site was not found at {}",
-            static_dir.display()
-        );
-    }
-    build_stage.finish("Static site ready");
-
-    Ok(BuildResult {
-        site_dir,
-        static_dir,
     })
 }
