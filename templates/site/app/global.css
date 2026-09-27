@@ -1,0 +1,427 @@
+@import "tailwindcss";
+@import "fumadocs-ui/css/neutral.css";
+@import "fumadocs-ui/css/preset.css";
+
+html {
+    scrollbar-gutter: stable;
+}
+
+html > body[data-scroll-locked] {
+    margin-right: 0px !important;
+    --removed-body-scroll-bar-size: 0px !important;
+}
+
+/* Rust API reference component styles */
+:root {
+    --api-kind-crate: #6f42c1;
+    --api-kind-module: #0e7490;
+    --api-kind-struct: #087f8c;
+    --api-kind-enum: #2563eb;
+    --api-kind-union: #7c3aed;
+    --api-kind-trait: #a16207;
+    --api-kind-type-alias: #0284c7;
+    --api-kind-function: #15803d;
+    --api-kind-constant: #c2410c;
+    --api-kind-static: #be123c;
+    --api-kind-macro: #9333ea;
+    --api-kind-proc-attribute: #be185d;
+    --api-kind-reexport: #0f766e;
+}
+
+html.dark,
+html[data-theme="dark"] {
+    --api-kind-crate: #b392f0;
+    --api-kind-module: #67e8f9;
+    --api-kind-struct: #5eead4;
+    --api-kind-enum: #93c5fd;
+    --api-kind-union: #c4b5fd;
+    --api-kind-trait: #fbbf24;
+    --api-kind-type-alias: #7dd3fc;
+    --api-kind-function: #86efac;
+    --api-kind-constant: #fdba74;
+    --api-kind-static: #fda4af;
+    --api-kind-macro: #d8b4fe;
+    --api-kind-proc-attribute: #f9a8d4;
+    --api-kind-reexport: #5eead4;
+}
+
+[data-kind="crate"] {
+    --api-kind-color: var(--api-kind-crate);
+}
+
+[data-kind="module"] {
+    --api-kind-color: var(--api-kind-module);
+}
+
+[data-kind="struct"] {
+    --api-kind-color: var(--api-kind-struct);
+}
+
+[data-kind="enum"] {
+    --api-kind-color: var(--api-kind-enum);
+}
+
+[data-kind="union"] {
+    --api-kind-color: var(--api-kind-union);
+}
+
+[data-kind="trait"],
+[data-kind="trait_alias"] {
+    --api-kind-color: var(--api-kind-trait);
+}
+
+[data-kind="type_alias"] {
+    --api-kind-color: var(--api-kind-type-alias);
+}
+
+[data-kind="function"] {
+    --api-kind-color: var(--api-kind-function);
+}
+
+[data-kind="constant"] {
+    --api-kind-color: var(--api-kind-constant);
+}
+
+[data-kind="static"] {
+    --api-kind-color: var(--api-kind-static);
+}
+
+[data-kind="macro"],
+[data-kind="proc_macro"],
+[data-kind="proc_derive"] {
+    --api-kind-color: var(--api-kind-macro);
+}
+
+[data-kind="proc_attribute"] {
+    --api-kind-color: var(--api-kind-proc-attribute);
+}
+
+[data-kind="reexport"] {
+    --api-kind-color: var(--api-kind-reexport);
+}
+
+.api-item-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+    color: var(--api-kind-color, inherit);
+    vertical-align: middle;
+}
+
+.api-item-label--compact {
+    gap: 0.35rem;
+}
+
+.api-kind-icon {
+    display: inline-block;
+    width: 0.875rem;
+    height: 0.875rem;
+    flex: none;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    vertical-align: middle;
+    stroke-width: 1.9;
+    color: var(--api-kind-color, currentColor);
+}
+
+.api-kind-icon--compact {
+    width: 0.875rem;
+    height: 0.875rem;
+}
+
+.api-item-label .api-kind-icon,
+.api-item-link .api-kind-icon,
+.api-reference-link .api-kind-icon,
+.api-member__icon-code .api-kind-icon {
+    width: 0.875rem;
+    height: 0.875rem;
+}
+
+.api-item-link {
+    display: inline-flex;
+    align-items: center;
+    max-width: 100%;
+    vertical-align: middle;
+    font-weight: 550;
+    color: var(--api-kind-color, inherit);
+    text-decoration: none;
+}
+
+.api-item-link:hover {
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+}
+
+.api-reference-link {
+    display: inline;
+    color: var(--api-kind-color, inherit);
+    text-decoration: none;
+}
+
+.api-reference-link:hover {
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+}
+
+.api-reference-link code {
+    color: inherit;
+}
+
+.api-reference-link .api-kind-icon {
+    margin-inline-end: 0.25em;
+}
+
+.api-member__code {
+    max-width: 100%;
+    min-width: 0;
+    flex: 1;
+    margin: 0;
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    line-height: 1.65;
+    padding: 0;
+}
+
+.api-member__signature {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    margin-block: 0.25rem 0.4rem;
+    padding: 0.2rem 0.8rem;
+}
+
+.api-impl {
+    margin-block: 0.3rem;
+}
+
+.api-member__permalink {
+    display: inline-grid;
+    flex: none;
+    place-items: center;
+    border: 0;
+    border-radius: 0.2rem;
+    background: transparent;
+    padding: 0.15rem;
+    opacity: 0;
+    color: var(--color-fd-muted-foreground);
+    cursor: pointer;
+    font: inherit;
+    transition: opacity 120ms ease-out;
+}
+
+.api-member__permalink svg {
+    width: 1rem;
+    height: 1rem;
+}
+
+.api-member__signature:hover .api-member__permalink,
+.api-member__permalink:focus-visible {
+    opacity: 1;
+}
+
+.api-member__permalink:focus-visible {
+    border-radius: 0.2rem;
+    outline: 2px solid var(--color-fd-primary);
+    outline-offset: 2px;
+}
+
+.api-member__signature[id] {
+    scroll-margin-block-start: 5rem;
+}
+
+.api-impl__items .api-member__signature {
+    margin-block: 1.3rem 0.5rem;
+}
+
+.api-impl__summary {
+    display: flex;
+    min-width: 0;
+    align-items: flex-start;
+    gap: 0.65rem;
+    padding: 0.2rem 0.8rem;
+    cursor: pointer;
+    list-style: none;
+}
+
+.api-impl__summary::-webkit-details-marker {
+    display: none;
+}
+
+.api-impl__chevron {
+    width: 0.875rem;
+    height: 0.875rem;
+    flex: none;
+    margin-block-start: 0.3rem;
+    stroke-width: 1.8;
+    transition: transform 120ms ease-out;
+}
+
+.api-impl[open] > .api-impl__summary .api-impl__chevron {
+    transform: rotate(90deg);
+}
+
+.api-impl__summary:focus-visible {
+    border-radius: 0.35rem;
+    outline: 2px solid var(--color-fd-primary);
+    outline-offset: 2px;
+}
+
+.api-impl__code {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.api-impl__items {
+    margin-inline-start: 1.75rem;
+}
+
+.api-impl__items .api-member__signature--no-icon {
+    padding-inline-start: 1.75rem;
+}
+
+.api-impl__items .api-member__description--no-icon {
+    padding-inline-start: calc(1.75rem + 0.8rem);
+}
+
+.api-member__icon-code {
+    display: inline-grid;
+    width: 1.4rem;
+    height: 1.4rem;
+    min-width: 1.4rem;
+    min-height: 1.4rem;
+    aspect-ratio: 1;
+    box-sizing: border-box;
+    flex: 0 0 1.4rem;
+    place-items: center;
+    border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+    border-radius: 0.35rem;
+    background: color-mix(in srgb, currentColor 5%, transparent);
+    font-size: 0.875rem;
+    line-height: 1;
+    padding: 0;
+}
+
+.api-member__code code.api-rust-signature {
+    --shiki-light: #24292e;
+    --shiki-dark: #e1e4e8;
+    display: block;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 0;
+    color: var(--shiki-light);
+    font-family:
+        ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.875rem;
+    line-height: inherit;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.api-rust-signature span {
+    color: var(--shiki-light);
+}
+
+.api-rust-signature a.api-signature-type-link {
+    color: inherit;
+    cursor: pointer;
+    text-decoration: none;
+    background-image: radial-gradient(
+        circle,
+        var(--color-fd-muted-foreground) 0.7px,
+        transparent 0.8px
+    );
+    background-position: left calc(100% - 1px);
+    background-repeat: repeat-x;
+    background-size: 5px 2px;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+    padding-bottom: 0.2em;
+}
+
+.api-rust-signature a.api-signature-type-link:hover {
+    background-image: none;
+    text-decoration-line: underline;
+    text-decoration-color: var(--color-fd-muted-foreground);
+    text-decoration-style: solid;
+    text-underline-offset: 0.25em;
+}
+
+.api-member__description {
+    padding: 0 0.8rem 0.75rem 3rem;
+    color: var(--color-fd-muted-foreground);
+    font-size: 0.9rem;
+}
+
+.api-member__description > :first-child {
+    margin-top: 0;
+}
+
+.api-member__description > :last-child {
+    margin-bottom: 0;
+}
+
+html.dark .api-rust-signature,
+html[data-theme="dark"] .api-rust-signature {
+    color: var(--shiki-dark);
+}
+
+html.dark .api-rust-signature span,
+html[data-theme="dark"] .api-rust-signature span {
+    color: var(--shiki-dark);
+}
+/* End Rust API reference component styles */
+
+.markdown-copy-button {
+    display: inline-flex;
+    min-height: 2rem;
+    align-items: center;
+    gap: 0.45rem;
+    border: 1px solid var(--color-fd-border);
+    border-radius: 0.5rem;
+    background: var(--color-fd-card);
+    padding: 0.35rem 0.65rem;
+    color: var(--color-fd-foreground);
+    font-size: 0.8rem;
+    font-weight: 550;
+    transition:
+        background-color 120ms ease-out,
+        transform 120ms ease-out;
+}
+
+.markdown-copy-button:hover {
+    background: color-mix(
+        in srgb,
+        var(--color-fd-foreground) 6%,
+        var(--color-fd-card)
+    );
+}
+
+.markdown-copy-button:active {
+    transform: scale(0.98);
+}
+
+.markdown-copy-button:focus-visible {
+    outline: 2px solid var(--color-fd-primary);
+    outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .markdown-copy-button {
+        transition: none;
+    }
+
+    .api-impl__chevron {
+        transition: none;
+    }
+
+    .api-member__permalink {
+        transition: none;
+    }
+}
