@@ -5,7 +5,10 @@ use std::{collections::HashMap, path::Path};
 use anyhow::Result;
 use indicatif::ProgressBar;
 
-use crate::rustdoc::{ApiPage, ExtractedTarget, SignatureLinkTarget, member_anchor};
+use crate::{
+    config::ApiOptions,
+    rustdoc::{ApiPage, ExtractedTarget, SignatureLinkTarget, SourceSpan, member_anchor},
+};
 
 use super::{metadata, util};
 
@@ -128,12 +131,14 @@ pub(super) fn write_target_pages(
     content_root: &Path,
     api: &ExtractedTarget,
     workspace_routes: &WorkspaceRoutes,
+    options: &ApiOptions,
+    repository_url: Option<&str>,
     progress: Option<&ProgressBar>,
 ) -> Result<()> {
     let target_root = &api.route_root;
     let overview = TargetOverview::new(api);
     let route_by_id = item_routes(api);
-    let api_items = grouped_api_items(&api.pages, 3);
+    let api_items = grouped_api_items(&api.pages, 3, options);
     let overview_markdown = overview.render(api.pages.len(), &api_items);
     metadata::write_markdown(
         &content_root.join(target_root).join("index.mdx"),
@@ -154,8 +159,16 @@ pub(super) fn write_target_pages(
             &route_by_id,
             workspace_routes,
         );
-        append_module_items(&mut markdown, page, api);
+        append_module_items(&mut markdown, page, api, options);
         links::rewrite_signature_type_links(&mut markdown, api, &route_by_id, workspace_routes);
+        if options.source_links
+            && let Some(source_url) = page
+                .source
+                .as_ref()
+                .and_then(|span| source_url(repository_url, &options.source_ref, span))
+        {
+            add_source_url(&mut markdown, &source_url);
+        }
         metadata::write_markdown(&path, &add_api_component_imports(&markdown))?;
         if let Some(progress) = progress {
             progress.inc(1);
@@ -180,7 +193,12 @@ fn item_routes(api: &ExtractedTarget) -> ItemRoutes {
     routes
 }
 
-fn append_module_items(markdown: &mut String, page: &ApiPage, api: &ExtractedTarget) {
+fn append_module_items(
+    markdown: &mut String,
+    page: &ApiPage,
+    api: &ExtractedTarget,
+    options: &ApiOptions,
+) {
     if page.kind != "module" {
         return;
     }
@@ -197,7 +215,7 @@ fn append_module_items(markdown: &mut String, page: &ApiPage, api: &ExtractedTar
         };
         parent_module == module_dir
     });
-    let items = grouped_api_items(children, 3);
+    let items = grouped_api_items(children, 3, options);
     if items.is_empty() {
         return;
     }
@@ -263,15 +281,23 @@ const API_KIND_SECTIONS: &[(&str, &str)] = &[
     ("reexport", "Re-exports"),
 ];
 
-fn grouped_api_items<'a>(pages: impl IntoIterator<Item = &'a ApiPage>, level: usize) -> String {
+fn grouped_api_items<'a>(
+    pages: impl IntoIterator<Item = &'a ApiPage>,
+    level: usize,
+    options: &ApiOptions,
+) -> String {
     let pages = pages.into_iter().collect::<Vec<_>>();
-    API_KIND_SECTIONS
-        .iter()
-        .filter_map(|(kind, heading)| {
+    options
+        .ordered_kinds()
+        .into_iter()
+        .filter_map(|kind| {
+            let heading = API_KIND_SECTIONS
+                .iter()
+                .find_map(|(candidate, heading)| (*candidate == kind).then_some(*heading))?;
             let mut items = pages
                 .iter()
                 .copied()
-                .filter(|page| page.kind == *kind)
+                .filter(|page| page.kind == kind)
                 .collect::<Vec<_>>();
             if items.is_empty() {
                 return None;
@@ -301,6 +327,62 @@ fn grouped_api_items<'a>(pages: impl IntoIterator<Item = &'a ApiPage>, level: us
         })
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+fn add_source_url(markdown: &mut String, source_url: &str) {
+    let Some(body) = markdown.strip_prefix("---\n") else {
+        return;
+    };
+    let Some(end) = body.find("\n---\n") else {
+        return;
+    };
+    let insertion = 4 + end;
+    markdown.insert_str(
+        insertion,
+        &format!("\nsourceUrl: {}", metadata::yaml_quote(source_url)),
+    );
+}
+
+fn source_url(repository_url: Option<&str>, source_ref: &str, span: &SourceSpan) -> Option<String> {
+    let repository_url = repository_url?.trim_end_matches('/');
+    if !repository_url.starts_with("https://github.com/") {
+        return None;
+    }
+    let path = span
+        .path
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(segment) => segment.to_str().map(url_segment),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    if path.is_empty() {
+        return None;
+    }
+    let source_ref = source_ref
+        .split('/')
+        .map(url_segment)
+        .collect::<Vec<_>>()
+        .join("/");
+    let lines = if span.last_line > span.first_line {
+        format!("#L{}-L{}", span.first_line, span.last_line)
+    } else {
+        format!("#L{}", span.first_line)
+    };
+    Some(format!("{repository_url}/blob/{source_ref}/{path}{lines}"))
+}
+
+fn url_segment(value: &str) -> String {
+    let mut output = String::new();
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            output.push(byte as char);
+        } else {
+            output.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    output
 }
 
 fn add_api_component_imports(markdown: &str) -> String {
@@ -340,4 +422,34 @@ fn add_api_component_imports(markdown: &str) -> String {
         &markdown[..insertion],
         &markdown[insertion..]
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    #[test]
+    fn builds_encoded_github_source_urls() {
+        let span = SourceSpan {
+            path: PathBuf::from("crates/demo src/src/lib.rs"),
+            first_line: 12,
+            last_line: 18,
+        };
+
+        assert_eq!(
+            source_url(Some("https://github.com/acme/demo"), "release/1.0", &span).as_deref(),
+            Some(
+                "https://github.com/acme/demo/blob/release/1.0/crates/demo%20src/src/lib.rs#L12-L18"
+            )
+        );
+    }
+
+    #[test]
+    fn inserts_source_url_into_frontmatter() {
+        let mut markdown = "---\ntitle: Demo\n---\n\nBody".to_owned();
+        add_source_url(&mut markdown, "https://example.com/source");
+        assert!(markdown.contains("sourceUrl: \"https://example.com/source\"\n---"));
+    }
 }

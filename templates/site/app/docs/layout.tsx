@@ -3,7 +3,7 @@ import { DocsLayout } from 'fumadocs-ui/layouts/docs';
 import { baseOptions } from '@/lib/layout.shared';
 import type * as PageTree from 'fumadocs-core/page-tree';
 import { ApiItemLabel } from '@/components/api-item';
-import siteConfig from '@/rusty-docs-site.json';
+import siteConfig from '@/lib/config';
 
 type PageTreeItem = PageTree.Root['children'][number];
 const apiItemKinds = new Map<string, string>(
@@ -18,7 +18,18 @@ const crateRoutes = new Set(
 
 export default function Layout({ children }: LayoutProps<'/docs'>) {
   return (
-    <DocsLayout tree={markApiItems(source.getPageTree())} {...baseOptions()}>
+    <DocsLayout
+      tree={markApiItems(source.getPageTree())}
+      {...baseOptions()}
+      sidebar={{
+        enabled: siteConfig.navigation.sidebar,
+        collapsible: siteConfig.navigation.sidebarCollapsible,
+        defaultOpenLevel: siteConfig.navigation.sidebarDefaultOpenLevel,
+        prefetch: siteConfig.navigation.prefetch,
+      }}
+      tabMode={siteConfig.navigation.tabMode}
+      tabs={siteConfig.navigation.tabs ? undefined : false}
+    >
       {children}
     </DocsLayout>
   );
@@ -128,25 +139,7 @@ function hasApiItem(node: PageTreeItem): boolean {
   return false;
 }
 
-const apiKindOrder = [
-  'crate',
-  'binary',
-  'module',
-  'struct',
-  'enum',
-  'union',
-  'constant',
-  'static',
-  'function',
-  'type_alias',
-  'trait',
-  'trait_alias',
-  'macro',
-  'proc_macro',
-  'proc_attribute',
-  'proc_derive',
-  'reexport',
-];
+const apiKindOrder = ['crate', 'binary', ...siteConfig.api.itemOrder];
 
 function sortApiItems(nodes: PageTreeItem[]): PageTreeItem[] {
   return [...nodes].sort((left, right) => {

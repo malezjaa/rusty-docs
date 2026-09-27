@@ -22,6 +22,7 @@ import {
 import { ApiItemLabel, ApiItemMark } from '@/components/api-item';
 import { MarkdownCopyButton } from '@/components/markdown-copy-button';
 import type { TOCItemType } from 'fumadocs-core/toc';
+import siteConfig from '@/lib/config';
 
 export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
   const params = await props.params;
@@ -64,7 +65,14 @@ export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
   }
 
   return (
-    <DocsPage toc={toc} full={page.data.full}>
+    <DocsPage
+      toc={toc}
+      full={page.data.full}
+      breadcrumb={{ enabled: siteConfig.page.breadcrumbs }}
+      footer={{ enabled: siteConfig.page.footer }}
+      tableOfContent={{ enabled: siteConfig.page.toc, style: siteConfig.page.tocStyle }}
+      tableOfContentPopover={{ enabled: siteConfig.page.toc, style: siteConfig.page.tocStyle }}
+    >
       <DocsTitle>
         {itemKind ? (
           <ApiItemLabel kind={itemKind} name={page.data.title} />
@@ -73,10 +81,26 @@ export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
         )}
       </DocsTitle>
       <DocsDescription className="mb-0">{page.data.description}</DocsDescription>
-      <div className="flex flex-row gap-2 items-center border-b pb-6">
-        <MarkdownCopyButton markdown={markdown} />
-        <ViewOptionsPopover markdownUrl={markdownUrl} />
-      </div>
+      {siteConfig.page.copyMarkdown ||
+      siteConfig.page.viewMarkdown ||
+      ((siteConfig.page.editOnGithub || siteConfig.api.sourceLinks) &&
+        page.data.sourceUrl) ? (
+        <div className="flex flex-row gap-2 items-center border-b pb-6">
+          {siteConfig.page.copyMarkdown ? <MarkdownCopyButton markdown={markdown} /> : null}
+          {siteConfig.page.viewMarkdown ||
+          ((siteConfig.page.editOnGithub || siteConfig.api.sourceLinks) &&
+            page.data.sourceUrl) ? (
+            <ViewOptionsPopover
+              markdownUrl={siteConfig.page.viewMarkdown ? markdownUrl : undefined}
+              githubUrl={
+                siteConfig.page.editOnGithub || siteConfig.api.sourceLinks
+                  ? page.data.sourceUrl
+                  : undefined
+              }
+            />
+          ) : null}
+        </div>
+      ) : null}
       <DocsBody>
         <MDX
           components={getMDXComponents({

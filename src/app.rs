@@ -44,10 +44,12 @@ pub fn run(cli: Cli) -> Result<()> {
                     target_name: &target.name,
                     target_kind: kind,
                     target_directory: &metadata.target_directory,
+                    workspace_root: &metadata.workspace_root,
                     toolchain: &cli.toolchain,
                     features: &features,
                     all_features,
                     no_default_features,
+                    api: &config.api,
                 },
                 &terminal,
             )?);

@@ -5,7 +5,7 @@ use include_dir::{Dir, include_dir};
 
 static TEMPLATE: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/templates/site");
 const MARKER: &str = ".rusty-docs-managed";
-const CURRENT_TEMPLATE_VERSION: u32 = 0;
+const CURRENT_TEMPLATE_VERSION: u32 = 1;
 
 #[derive(Clone, Copy)]
 enum CopyPolicy {

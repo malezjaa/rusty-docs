@@ -1,18 +1,29 @@
 import Link from 'next/link';
 import { appName, appDescription } from '@/lib/shared';
+import { redirect } from 'next/navigation';
+import siteConfig from '@/lib/config';
 
 export default function HomePage() {
+  if (siteConfig.home.mode === 'redirect') redirect('/docs');
+
   return (
-    <div className="flex flex-col justify-center text-center flex-1">
-      <h1 className="text-2xl font-bold mb-4">{appName}</h1>
+    <div className="home-hero">
+      <h1>{siteConfig.home.headline ?? appName}</h1>
       <p>{appDescription}</p>
-      <p>
-        Browse the{' '}
-        <Link href="/docs" className="font-medium underline">
-          /docs
-        </Link>{' '}
-        and see the documentation.
-      </p>
+      <div className="home-actions">
+        <Link href="/docs" className="home-link home-link--primary">
+          Read the docs
+        </Link>
+        {siteConfig.home.links.map((link) => (
+          <Link
+            href={link.url}
+            className={`home-link${link.primary ? ' home-link--primary' : ''}`}
+            key={`${link.text}-${link.url}`}
+          >
+            {link.text}
+          </Link>
+        ))}
+      </div>
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { createGetUrl } from 'fumadocs-core/source';
-import siteConfig from '../rusty-docs-site.json';
+import siteConfig from './config';
 
 export const appName = siteConfig.title;
 export const appDescription = siteConfig.description;

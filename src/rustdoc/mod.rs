@@ -14,6 +14,7 @@ use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
 use crate::{
+    config::ApiOptions,
     metadata::{Package, TargetKind},
     terminal::Terminal,
 };
@@ -32,6 +33,14 @@ pub struct ApiPage {
     pub doc_links: Vec<DocLinkGroup>,
     pub kind: String,
     pub markdown: String,
+    pub source: Option<SourceSpan>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SourceSpan {
+    pub path: PathBuf,
+    pub first_line: usize,
+    pub last_line: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -91,10 +100,12 @@ pub struct ExtractOptions<'a> {
     pub target_name: &'a str,
     pub target_kind: TargetKind,
     pub target_directory: &'a Path,
+    pub workspace_root: &'a Path,
     pub toolchain: &'a str,
     pub features: &'a [String],
     pub all_features: bool,
     pub no_default_features: bool,
+    pub api: &'a ApiOptions,
 }
 
 pub fn extract(
@@ -106,10 +117,12 @@ pub fn extract(
         target_name,
         target_kind,
         target_directory,
+        workspace_root,
         toolchain,
         features,
         all_features,
         no_default_features,
+        api,
     } = options;
     let target_label = match target_kind {
         TargetKind::Library => "library",
@@ -201,7 +214,8 @@ pub fn extract(
             .join(text::slug(&package.name))
             .join(target_name),
     };
-    let (pages, signature_targets) = pages::render_pages(&json, package, &route_root)?;
+    let (pages, signature_targets) =
+        pages::render_pages(&json, package, &route_root, workspace_root, api)?;
     let page_count = terminal.highlight(&pages.len().to_string());
     let package_name = terminal.highlight(&package.name);
     stage.finish(&format!("Extracted {page_count} pages from {package_name}"));

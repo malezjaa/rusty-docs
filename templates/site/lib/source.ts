@@ -18,7 +18,10 @@ const apiTocSchema = z.array(
 const docs = defineDocs({
   dir: 'content/docs',
   docs: {
-    schema: pageSchema.extend({ apiToc: apiTocSchema.default([]) }),
+    schema: pageSchema.extend({
+      apiToc: apiTocSchema.default([]),
+      sourceUrl: z.string().url().optional(),
+    }),
     postprocess: {
       includeProcessedMarkdown: true,
     },

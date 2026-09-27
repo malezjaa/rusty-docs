@@ -1,6 +1,5 @@
 @import "tailwindcss";
-@import "fumadocs-ui/css/neutral.css";
-@import "fumadocs-ui/css/preset.css";
+@import "./rusty-docs-theme.css";
 
 html {
     scrollbar-gutter: stable;
@@ -11,99 +10,87 @@ html > body[data-scroll-locked] {
     --removed-body-scroll-bar-size: 0px !important;
 }
 
-/* Rust API reference component styles */
-:root {
-    --api-kind-crate: #6f42c1;
-    --api-kind-module: #0e7490;
-    --api-kind-struct: #087f8c;
-    --api-kind-enum: #2563eb;
-    --api-kind-union: #7c3aed;
-    --api-kind-trait: #a16207;
-    --api-kind-type-alias: #0284c7;
-    --api-kind-primitive: #0e7490;
-    --api-kind-function: #15803d;
-    --api-kind-constant: #c2410c;
-    --api-kind-static: #be123c;
-    --api-kind-macro: #9333ea;
-    --api-kind-proc-attribute: #be185d;
-    --api-kind-reexport: #0f766e;
+.site-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
 }
 
-html.dark,
-html[data-theme="dark"] {
-    --api-kind-crate: #b392f0;
-    --api-kind-module: #67e8f9;
-    --api-kind-struct: #5eead4;
-    --api-kind-enum: #93c5fd;
-    --api-kind-union: #c4b5fd;
-    --api-kind-trait: #fbbf24;
-    --api-kind-type-alias: #7dd3fc;
-    --api-kind-primitive: #67e8f9;
-    --api-kind-function: #86efac;
-    --api-kind-constant: #fdba74;
-    --api-kind-static: #fda4af;
-    --api-kind-macro: #d8b4fe;
-    --api-kind-proc-attribute: #f9a8d4;
-    --api-kind-reexport: #5eead4;
+.site-logo {
+    width: 1.5rem;
+    height: 1.5rem;
+    object-fit: contain;
 }
 
-[data-kind="crate"] {
-    --api-kind-color: var(--api-kind-crate);
+.site-logo--dark {
+    display: none;
 }
 
-[data-kind="module"] {
-    --api-kind-color: var(--api-kind-module);
+html.dark .site-logo--light,
+html[data-theme="dark"] .site-logo--light {
+    display: none;
 }
 
-[data-kind="struct"] {
-    --api-kind-color: var(--api-kind-struct);
+html.dark .site-logo--dark,
+html[data-theme="dark"] .site-logo--dark {
+    display: block;
 }
 
-[data-kind="enum"] {
-    --api-kind-color: var(--api-kind-enum);
+.home-hero {
+    display: flex;
+    width: min(42rem, calc(100% - 2rem));
+    flex: 1;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    margin-inline: auto;
+    text-align: center;
 }
 
-[data-kind="union"] {
-    --api-kind-color: var(--api-kind-union);
+.home-hero h1 {
+    margin: 0;
+    font-size: clamp(2rem, 7vw, 4.5rem);
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    line-height: 1;
 }
 
-[data-kind="trait"],
-[data-kind="trait_alias"] {
-    --api-kind-color: var(--api-kind-trait);
+.home-hero p {
+    max-width: 36rem;
+    margin-block: 1.25rem 0;
+    color: var(--color-fd-muted-foreground);
+    font-size: 1.125rem;
 }
 
-[data-kind="type_alias"] {
-    --api-kind-color: var(--api-kind-type-alias);
+.home-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.75rem;
+    margin-block-start: 1.75rem;
 }
 
-[data-kind="primitive"] {
-    --api-kind-color: var(--api-kind-primitive);
+.home-link {
+    border: 1px solid var(--color-fd-border);
+    border-radius: 0.5rem;
+    padding: 0.6rem 1rem;
+    color: var(--color-fd-foreground);
+    font-weight: 500;
+    text-decoration: none;
 }
 
-[data-kind="function"] {
-    --api-kind-color: var(--api-kind-function);
+.home-link:hover {
+    background: var(--color-fd-accent);
 }
 
-[data-kind="constant"] {
-    --api-kind-color: var(--api-kind-constant);
+.home-link--primary {
+    border-color: var(--color-fd-primary);
+    background: var(--color-fd-primary);
+    color: var(--color-fd-primary-foreground);
 }
 
-[data-kind="static"] {
-    --api-kind-color: var(--api-kind-static);
-}
-
-[data-kind="macro"],
-[data-kind="proc_macro"],
-[data-kind="proc_derive"] {
-    --api-kind-color: var(--api-kind-macro);
-}
-
-[data-kind="proc_attribute"] {
-    --api-kind-color: var(--api-kind-proc-attribute);
-}
-
-[data-kind="reexport"] {
-    --api-kind-color: var(--api-kind-reexport);
+.home-link--primary:hover {
+    opacity: 0.9;
 }
 
 .api-item-label {

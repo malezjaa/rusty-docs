@@ -6,9 +6,9 @@ use std::{
 use anyhow::{Context, Result};
 use serde_json::{Map, Value};
 
-use crate::metadata::Package;
+use crate::{config::ApiOptions, metadata::Package};
 
-use super::{ApiPage, DocLinkTarget, SignatureLinkTarget, members, signature, text};
+use super::{ApiPage, DocLinkTarget, SignatureLinkTarget, SourceSpan, members, signature, text};
 
 struct PendingPage<'a> {
     kind: String,
@@ -23,6 +23,8 @@ pub(super) fn render_pages(
     json: &Value,
     package: &Package,
     target_root: &Path,
+    workspace_root: &Path,
+    options: &ApiOptions,
 ) -> Result<(Vec<ApiPage>, HashMap<String, SignatureLinkTarget>)> {
     let index = json
         .get("index")
@@ -112,6 +114,9 @@ pub(super) fn render_pages(
         if !is_supported_kind(&kind) {
             continue;
         }
+        if options.hides_kind(&kind) {
+            continue;
+        }
 
         let relative_path = if kind == "module" {
             let mut relative_path = target_root.to_path_buf();
@@ -151,7 +156,8 @@ pub(super) fn render_pages(
             markdown.push_str(&rendered_docs);
             markdown.push_str("\n\n");
         }
-        let api_toc = members::append_members(&mut markdown, &kind, item, index, &mut doc_links);
+        let api_toc =
+            members::append_members(&mut markdown, &kind, item, index, &mut doc_links, options);
         resolve_external_doc_links(&mut doc_links, paths, external_crates);
         let api_toc_json =
             serde_json::to_string(&api_toc).context("Could not serialize API TOC")?;
@@ -177,6 +183,7 @@ pub(super) fn render_pages(
                 doc_links,
                 kind,
                 markdown,
+                source: source_span(item, package, workspace_root),
             },
         );
     }
@@ -186,6 +193,38 @@ pub(super) fn render_pages(
     }
 
     Ok((pages.into_values().collect(), signature_targets))
+}
+
+fn source_span(item: &Value, package: &Package, workspace_root: &Path) -> Option<SourceSpan> {
+    let span = item.get("span")?;
+    let filename = PathBuf::from(span.get("filename")?.as_str()?);
+    let path = if filename.is_absolute() {
+        filename
+            .strip_prefix(workspace_root)
+            .or_else(|_| filename.strip_prefix(package.root()))
+            .ok()?
+            .to_path_buf()
+    } else {
+        package
+            .root()
+            .strip_prefix(workspace_root)
+            .ok()
+            .map(|package_path| package_path.join(&filename))
+            .unwrap_or(filename)
+    };
+    if path
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return None;
+    }
+    let first_line = span.get("begin")?.as_array()?.first()?.as_u64()? as usize;
+    let last_line = span.get("end")?.as_array()?.first()?.as_u64()? as usize;
+    Some(SourceSpan {
+        path,
+        first_line,
+        last_line,
+    })
 }
 
 fn reserve_page_path(
@@ -602,5 +641,30 @@ mod tests {
             reserve_page_path(preferred, "enum", &json!({"id": 3}), &mut reserved),
             PathBuf::from("api/demo/item--enum-3.mdx")
         );
+    }
+
+    #[test]
+    fn makes_relative_spans_workspace_relative() {
+        let package = Package {
+            id: "demo".to_owned(),
+            name: "demo".to_owned(),
+            version: "1.0.0".to_owned(),
+            manifest_path: PathBuf::from("/work/crates/demo/Cargo.toml"),
+            description: None,
+            repository: None,
+            targets: Vec::new(),
+        };
+        let item = json!({
+            "span": {
+                "filename": "src/lib.rs",
+                "begin": [10, 1],
+                "end": [12, 2]
+            }
+        });
+
+        let span = source_span(&item, &package, Path::new("/work")).unwrap();
+        assert_eq!(span.path, PathBuf::from("crates/demo/src/lib.rs"));
+        assert_eq!(span.first_line, 10);
+        assert_eq!(span.last_line, 12);
     }
 }

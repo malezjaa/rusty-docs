@@ -1,4 +1,5 @@
 mod api_pages;
+mod assets;
 mod content;
 mod metadata;
 mod npm;
@@ -16,15 +17,43 @@ use crate::{
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct SiteConfig {
+struct SiteConfig<'a> {
     title: String,
     description: String,
     base_path: String,
     content_position: String,
     site_url: Option<String>,
     repository_url: Option<String>,
+    logo_url: Option<String>,
+    logo_dark_url: Option<String>,
+    favicon_url: Option<String>,
+    language: String,
+    direction: &'a crate::config::Direction,
+    theme: ThemeConfig<'a>,
+    navigation: &'a crate::config::NavigationOptions,
+    page: &'a crate::config::PageOptions,
+    home: &'a crate::config::HomeOptions,
+    api: ApiConfig,
     packages: Vec<PackageSummary>,
     api_items: Vec<ApiItemSummary>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ThemeConfig<'a> {
+    preset: String,
+    default_mode: &'a crate::config::ThemeMode,
+    theme_switch: bool,
+    theme_switch_mode: &'a crate::config::ThemeSwitchMode,
+    layout_width: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ApiConfig {
+    default_impls_open: bool,
+    item_order: Vec<String>,
+    source_links: bool,
 }
 
 #[derive(Serialize)]
@@ -73,7 +102,15 @@ pub fn generate_and_build(
     }
 
     template::ensure_template(&site_dir)?;
-    let site_config = create_site_config(config, targets)?;
+    let base_path = metadata::normalize_base_path(&config.site.base_path)?;
+    let site_assets = assets::sync(
+        &site_dir,
+        workspace_root,
+        &config.site,
+        &config.api,
+        &base_path,
+    )?;
+    let site_config = create_site_config(config, targets, base_path, site_assets)?;
 
     let stage = terminal.stage("Writing site metadata and syncing content");
     metadata::write_json(&site_dir.join("rusty-docs-site.json"), &site_config)?;
@@ -101,6 +138,8 @@ pub fn generate_and_build(
             &content_target,
             target,
             &workspace_routes,
+            &config.api,
+            site_config.repository_url.as_deref(),
             progress.as_ref(),
         )?;
     }
@@ -128,8 +167,12 @@ pub fn generate_and_build(
     })
 }
 
-fn create_site_config(config: &Config, targets: &[ExtractedTarget]) -> Result<SiteConfig> {
-    let base_path = metadata::normalize_base_path(&config.site.base_path)?;
+fn create_site_config<'a>(
+    config: &'a Config,
+    targets: &[ExtractedTarget],
+    base_path: String,
+    assets: assets::SiteAssets,
+) -> Result<SiteConfig<'a>> {
     let site_url = config
         .site
         .url
@@ -141,11 +184,23 @@ fn create_site_config(config: &Config, targets: &[ExtractedTarget]) -> Result<Si
         .title
         .clone()
         .unwrap_or_else(|| metadata::default_title(targets));
-    let description = metadata::site_description(targets);
-    let repository_url = targets
-        .iter()
-        .filter_map(|target| target.package.repository.as_deref())
-        .find_map(metadata::normalize_github_url);
+    let description = config
+        .site
+        .description
+        .clone()
+        .unwrap_or_else(|| metadata::site_description(targets));
+    let repository_url = if let Some(repository_url) = config.site.repository_url.as_deref() {
+        Some(
+            metadata::normalize_github_url(repository_url).ok_or_else(|| {
+                anyhow::anyhow!("site.repository_url must be an https://github.com repository URL")
+            })?,
+        )
+    } else {
+        targets
+            .iter()
+            .filter_map(|target| target.package.repository.as_deref())
+            .find_map(metadata::normalize_github_url)
+    };
     let package_summaries = targets
         .iter()
         .filter(|target| target.target_kind.is_library())
@@ -190,6 +245,26 @@ fn create_site_config(config: &Config, targets: &[ExtractedTarget]) -> Result<Si
         content_position: config.site.content_position.as_str().to_owned(),
         site_url,
         repository_url,
+        logo_url: assets.logo_url,
+        logo_dark_url: assets.logo_dark_url,
+        favicon_url: assets.favicon_url,
+        language: config.site.language.clone(),
+        direction: &config.site.direction,
+        theme: ThemeConfig {
+            preset: config.site.theme.preset.as_str().to_owned(),
+            default_mode: &config.site.theme.default_mode,
+            theme_switch: config.site.theme.theme_switch,
+            theme_switch_mode: &config.site.theme.theme_switch_mode,
+            layout_width: config.site.theme.layout_width.clone(),
+        },
+        navigation: &config.site.navigation,
+        page: &config.site.page,
+        home: &config.site.home,
+        api: ApiConfig {
+            default_impls_open: config.api.default_impls_open,
+            item_order: config.api.ordered_kinds(),
+            source_links: config.api.source_links,
+        },
         packages: package_summaries,
         api_items,
     })

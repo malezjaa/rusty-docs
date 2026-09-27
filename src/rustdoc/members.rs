@@ -1,5 +1,7 @@
 use serde_json::{Map, Value};
 
+use crate::config::ApiOptions;
+
 use super::{ApiTocItem, DocLinkGroup, DocLinkTarget, member_anchor, signature, text};
 
 struct MemberRenderer<'a> {
@@ -56,6 +58,7 @@ pub(super) fn append_members(
     item: &Value,
     index: &serde_json::Map<String, Value>,
     doc_links: &mut Vec<DocLinkGroup>,
+    options: &ApiOptions,
 ) -> Vec<ApiTocItem> {
     let mut renderer = MemberRenderer {
         heading_count: text::heading_count(markdown),
@@ -70,7 +73,7 @@ pub(super) fn append_members(
         _ => {}
     }
     if matches!(kind, "struct" | "enum" | "union") {
-        renderer.append_implementations(item, index);
+        renderer.append_implementations(item, index, options);
     }
     renderer.api_toc
 }
@@ -263,7 +266,12 @@ impl MemberRenderer<'_> {
         }
     }
 
-    fn append_implementations(&mut self, item: &Value, index: &Map<String, Value>) {
+    fn append_implementations(
+        &mut self,
+        item: &Value,
+        index: &Map<String, Value>,
+        options: &ApiOptions,
+    ) {
         let Some(inner) = item.get("inner").and_then(Value::as_object) else {
             return;
         };
@@ -313,20 +321,24 @@ impl MemberRenderer<'_> {
 
         self.append_impl_group("Implementations", &inherent, &self_type, index, true);
         self.append_impl_group("Trait Implementations", &traits, &self_type, index, false);
-        self.append_impl_group(
-            "Auto Trait Implementations",
-            &auto_traits,
-            &self_type,
-            index,
-            false,
-        );
-        self.append_impl_group(
-            "Blanket Implementations",
-            &blanket,
-            &self_type,
-            index,
-            false,
-        );
+        if options.show_auto_trait_impls {
+            self.append_impl_group(
+                "Auto Trait Implementations",
+                &auto_traits,
+                &self_type,
+                index,
+                false,
+            );
+        }
+        if options.show_blanket_impls {
+            self.append_impl_group(
+                "Blanket Implementations",
+                &blanket,
+                &self_type,
+                index,
+                false,
+            );
+        }
     }
 
     fn append_impl_group(
@@ -607,7 +619,14 @@ mod tests {
         let mut markdown = String::new();
         let mut doc_links = Vec::new();
 
-        let toc = append_members(&mut markdown, "struct", &item, &index, &mut doc_links);
+        let toc = append_members(
+            &mut markdown,
+            "struct",
+            &item,
+            &index,
+            &mut doc_links,
+            &ApiOptions::default(),
+        );
 
         assert!(markdown.starts_with("## Fields\n\n"));
         assert!(markdown.contains("Stored value."));
@@ -640,9 +659,78 @@ mod tests {
         let mut markdown = String::new();
         let mut doc_links = Vec::new();
 
-        let toc = append_members(&mut markdown, "struct", &item, &index, &mut doc_links);
+        let toc = append_members(
+            &mut markdown,
+            "struct",
+            &item,
+            &index,
+            &mut doc_links,
+            &ApiOptions::default(),
+        );
 
         assert!(markdown.is_empty());
         assert!(toc.is_empty());
+    }
+
+    #[test]
+    fn can_hide_auto_trait_and_blanket_implementations() {
+        let item = json!({
+            "name": "Widget",
+            "inner": {
+                "struct": {
+                    "kind": { "unit": true },
+                    "generics": { "params": [], "where_predicates": [] },
+                    "impls": [1, 2]
+                }
+            }
+        });
+        let mut index = Map::new();
+        index.insert(
+            "1".to_owned(),
+            json!({
+                "id": 1,
+                "inner": {
+                    "impl": {
+                        "is_synthetic": true,
+                        "trait": { "resolved_path": { "name": "Send", "id": 10, "args": null } },
+                        "items": [],
+                        "generics": { "params": [], "where_predicates": [] }
+                    }
+                }
+            }),
+        );
+        index.insert(
+            "2".to_owned(),
+            json!({
+                "id": 2,
+                "inner": {
+                    "impl": {
+                        "blanket_impl": { "generic": "T" },
+                        "trait": { "resolved_path": { "name": "Into", "id": 11, "args": null } },
+                        "items": [],
+                        "generics": { "params": [], "where_predicates": [] }
+                    }
+                }
+            }),
+        );
+        let options = ApiOptions {
+            show_auto_trait_impls: false,
+            show_blanket_impls: false,
+            ..ApiOptions::default()
+        };
+        let mut markdown = String::new();
+        let mut doc_links = Vec::new();
+
+        append_members(
+            &mut markdown,
+            "struct",
+            &item,
+            &index,
+            &mut doc_links,
+            &options,
+        );
+
+        assert!(!markdown.contains("Auto Trait Implementations"));
+        assert!(!markdown.contains("Blanket Implementations"));
     }
 }

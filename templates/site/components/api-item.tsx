@@ -26,6 +26,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { codeToTokens } from "shiki";
 import { ApiImplDisclosure } from "./api-impl-disclosure";
 import { ApiMemberPermalink } from "./api-member-permalink";
+import siteConfig from "@/lib/config";
 
 const itemKinds: Record<string, { label: string; icon: LucideIcon }> = {
   crate: { label: "Crate", icon: Package },
@@ -186,6 +187,7 @@ export function ApiImpl({
 }) {
   return (
     <ApiImplDisclosure
+      defaultOpen={siteConfig.api.defaultImplsOpen}
       id={id}
       summary={
         <span className="api-member__code api-impl__code">

@@ -7,10 +7,12 @@ export function ApiImplDisclosure({
   id,
   summary,
   children,
+  defaultOpen = false,
 }: {
   id?: string;
   summary: ReactNode;
   children?: ReactNode;
+  defaultOpen?: boolean;
 }) {
   const detailsRef = useRef<HTMLDetailsElement>(null);
 
@@ -39,7 +41,7 @@ export function ApiImplDisclosure({
   }, []);
 
   return (
-    <details className="api-impl" id={id} ref={detailsRef}>
+    <details className="api-impl" id={id} open={defaultOpen} ref={detailsRef}>
       <summary className="api-impl__summary">
         <ChevronRight aria-hidden="true" className="api-impl__chevron" />
         {summary}
