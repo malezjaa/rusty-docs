@@ -1,8 +1,8 @@
 # rusty-docs
 
-`rusty-docs` builds one static documentation site from a Cargo package. The
-site combines public Rust API pages with Markdown or MDX guides and uses the
-Fumadocs static Next.js starter.
+`rusty-docs` builds one static documentation site from one or more Cargo
+library packages. The site combines public Rust API pages with Markdown or
+MDX guides and uses the Fumadocs static Next.js starter.
 
 ## Requirements
 
@@ -34,6 +34,11 @@ rusty-docs
 rusty-docs --package my-library
 rusty-docs --workspace
 ```
+
+When rusty-docs asks which packages to document, all available library
+packages start selected. Press Space to toggle a package, then Enter to
+continue. Use `--package` to document one named package or `--workspace` to
+include every library package without a prompt.
 
 The generated Next.js project lives in `docs-site/`. The static website is in
 `docs-site/out/`.

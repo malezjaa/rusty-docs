@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, bail};
-use dialoguer::Select;
+use dialoguer::MultiSelect;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -185,12 +185,16 @@ fn choose_interactively(packages: &[Package]) -> Result<Vec<Package>> {
         .iter()
         .map(|package| format!("{} v{}", package.name, package.version))
         .collect::<Vec<_>>();
-    let selection = Select::new()
-        .with_prompt("Select a library package to document")
+    let defaults = vec![true; choices.len()];
+    let selections = MultiSelect::new()
+        .with_prompt("Select library packages to document")
         .items(&choices)
-        .default(0)
+        .defaults(&defaults)
         .interact_opt()
         .context("Could not read package selection")?
         .ok_or_else(|| anyhow::anyhow!("Package selection cancelled."))?;
-    Ok(vec![packages[selection].clone()])
+    Ok(selections
+        .into_iter()
+        .map(|selection| packages[selection].clone())
+        .collect())
 }

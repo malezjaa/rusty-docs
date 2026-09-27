@@ -191,7 +191,7 @@ pub(super) fn heading_count(markdown: &str) -> usize {
     count
 }
 
-pub(super) fn normalize_doctest_fences(markdown: &str) -> String {
+pub(super) fn normalize_code_fences(markdown: &str) -> String {
     let mut output = String::with_capacity(markdown.len());
     let mut open_fence = None;
 
@@ -214,9 +214,15 @@ pub(super) fn normalize_doctest_fences(markdown: &str) -> String {
             continue;
         };
 
-        if let Some(info) = normalize_doctest_info(info) {
+        let normalized = if info == "none" {
+            Some(("text", String::new()))
+        } else {
+            normalize_doctest_info(info).map(|info| ("rust", info))
+        };
+
+        if let Some((language, info)) = normalized {
             output.push_str(fence.prefix);
-            output.push_str("rust");
+            output.push_str(language);
             output.push_str(&info);
             output.push_str(line_ending);
             if line.ends_with('\n') {

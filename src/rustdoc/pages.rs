@@ -154,9 +154,9 @@ pub(super) fn render_pages(
             text::yaml_quote(&description),
             api_toc_json
         );
-        markdown = text::normalize_doctest_fences(&markdown);
+        markdown = text::normalize_code_fences(&markdown);
         for group in &mut doc_links {
-            group.markdown = text::normalize_doctest_fences(&group.markdown);
+            group.markdown = text::normalize_code_fences(&group.markdown);
         }
 
         pages.insert(
