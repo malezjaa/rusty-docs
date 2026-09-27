@@ -16,6 +16,32 @@ fn linkable_name(value: &Value, name: &str) -> String {
         .unwrap_or_else(|| name.to_owned())
 }
 
+fn without_link_references(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut cursor = 0;
+    while let Some(relative_start) = value[cursor..].find(LINK_START) {
+        let start = cursor + relative_start;
+        output.push_str(&value[cursor..start]);
+        let key_start = start + LINK_START.len_utf8();
+        let Some(relative_separator) = value[key_start..].find(LINK_SEPARATOR) else {
+            output.push(LINK_START);
+            cursor = key_start;
+            continue;
+        };
+        let label_start = key_start + relative_separator + LINK_SEPARATOR.len_utf8();
+        let Some(relative_end) = value[label_start..].find(LINK_END) else {
+            output.push(LINK_START);
+            cursor = key_start;
+            continue;
+        };
+        let end = label_start + relative_end;
+        output.push_str(&value[label_start..end]);
+        cursor = end + LINK_END.len_utf8();
+    }
+    output.push_str(&value[cursor..]);
+    output
+}
+
 pub(super) fn signature(
     kind: &str,
     name: &str,
@@ -606,11 +632,12 @@ pub(super) fn trait_name(value: &Value) -> String {
             .get("args")
             .or_else(|| value.get("resolved_path").and_then(|path| path.get("args"))),
     );
-    if args.is_empty() {
+    let name = if args.is_empty() {
         name.to_owned()
     } else {
         format!("{name}<{}>", args.join(", "))
-    }
+    };
+    without_link_references(&name)
 }
 
 pub(super) fn linked_trait_name(value: &Value) -> String {

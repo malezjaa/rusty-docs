@@ -344,6 +344,22 @@ fn upgrade_api_item_component(site_dir: &Path) -> Result<()> {
         .context("Embedded API item component is missing RustSignature")?
         + 1;
     let signature_component = &template[signature_start..];
+    let kinds_start = template
+        .find("const itemKinds:")
+        .context("Embedded API item component is missing itemKinds")?;
+    let kinds_end = template[kinds_start..]
+        .find("\n};")
+        .map(|offset| kinds_start + offset + "\n};".len())
+        .context("Embedded API item component has an incomplete itemKinds map")?;
+    let item_kinds = &template[kinds_start..kinds_end];
+
+    if let Some(current_start) = source.find("const itemKinds:")
+        && let Some(current_end) = source[current_start..]
+            .find("\n};")
+            .map(|offset| current_start + offset + "\n};".len())
+    {
+        source.replace_range(current_start..current_end, item_kinds);
+    }
 
     if !source.contains("from \"shiki\"") {
         let react_import = "import type { CSSProperties, ReactNode } from \"react\";";
@@ -418,10 +434,33 @@ fn upgrade_api_reference_links(site_dir: &Path) -> Result<()> {
         "const kind = getApiItemKindForUrl(props.href);",
         "const kind = getApiItemKindForUrl(props.href) ?? props['data-kind'];",
     );
-    if !source.contains("if (props.target === \"_blank\")") {
+    const OLD_EXTERNAL_LINK_BYPASS: &str =
+        "if (props.target === \"_blank\") return <a {...props} />;";
+    const STYLED_EXTERNAL_LINK: &str = r#"if (props.target === "_blank") {
+      if (!kind) return <a {...props} />;
+      return (
+        <a
+          {...props}
+          className={['api-reference-link', props.className].filter(Boolean).join(' ')}
+          data-kind={kind}
+        >
+          {withApiKindIcon(props.children, kind)}
+        </a>
+      );
+    }"#;
+    if source.contains(OLD_EXTERNAL_LINK_BYPASS) {
+        source = source.replace(OLD_EXTERNAL_LINK_BYPASS, STYLED_EXTERNAL_LINK);
+    } else if !source.contains("withApiKindIcon(props.children, kind)") {
         source = source.replace(
             "    if (!props.href) return <a {...props} />;",
-            "    if (!props.href) return <a {...props} />;\n    if (props.target === \"_blank\") return <a {...props} />;",
+            &format!("    if (!props.href) return <a {{...props}} />;\n    {STYLED_EXTERNAL_LINK}"),
+        );
+    }
+    if !source.contains("props.className?.split(/\\s+/).includes('api-reference-link')") {
+        source = source.replacen(
+            "{withApiKindIcon(props.children, kind)}",
+            "{props.className?.split(/\\s+/).includes('api-reference-link')\n            ? props.children\n            : withApiKindIcon(props.children, kind)}",
+            1,
         );
     }
     source = source.replace(
@@ -533,8 +572,23 @@ const apiCrateRoutes = new Set(
         source = source.replace(OLD_MAP_END, NEW_CRATE_ROUTES);
     }
     const OLD_KIND_LOOKUP: &str = "export function getApiItemKindForUrl(url: string) {\n  return apiItemKinds.get(normalizePageUrl(url));\n}";
-    const NEW_KIND_LOOKUP: &str = "export function getApiItemKindForUrl(url: string) {\n  const normalizedUrl = normalizePageUrl(url);\n  return apiItemKinds.get(normalizedUrl)\n    ?? (apiCrateRoutes.has(normalizedUrl) ? 'crate' : undefined);\n}";
+    const NEW_KIND_LOOKUP: &str = "export function getApiItemKindForUrl(url: string) {\n  const normalizedUrl = normalizePageUrl(url);\n  return apiItemKinds.get(normalizedUrl)\n    ?? (apiCrateRoutes.has(normalizedUrl) ? 'crate' : undefined)\n    ?? getRustdocItemKind(url);\n}";
+    const OLD_CRATE_KIND_LOOKUP: &str = "export function getApiItemKindForUrl(url: string) {\n  const normalizedUrl = normalizePageUrl(url);\n  return apiItemKinds.get(normalizedUrl)\n    ?? (apiCrateRoutes.has(normalizedUrl) ? 'crate' : undefined);\n}";
     source = source.replace(OLD_KIND_LOOKUP, NEW_KIND_LOOKUP);
+    source = source.replace(OLD_CRATE_KIND_LOOKUP, NEW_KIND_LOOKUP);
+
+    if !source.contains("function getRustdocItemKind(") {
+        let template = TEMPLATE
+            .get_file("lib/shared.ts")
+            .context("Embedded site template is missing lib/shared.ts")?;
+        let template = std::str::from_utf8(template.contents())
+            .context("Embedded shared site helpers are not valid UTF-8")?;
+        let helper_start = template
+            .find("function getRustdocItemKind(")
+            .context("Embedded shared site helpers are missing Rustdoc kind inference")?;
+        source.push_str("\n\n");
+        source.push_str(&template[helper_start..]);
+    }
 
     if source != original {
         fs::write(&path, source)

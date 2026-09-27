@@ -38,8 +38,21 @@ export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
     props: ComponentProps<'a'> & { 'data-kind'?: string },
   ) {
     if (!props.href) return <a {...props} />;
-    if (props.target === "_blank") return <a {...props} />;
     const kind = getApiItemKindForUrl(props.href) ?? props['data-kind'];
+    if (props.target === "_blank") {
+      if (!kind) return <a {...props} />;
+      return (
+        <a
+          {...props}
+          className={['api-reference-link', props.className].filter(Boolean).join(' ')}
+          data-kind={kind}
+        >
+          {props.className?.split(/\s+/).includes('api-reference-link')
+            ? props.children
+            : withApiKindIcon(props.children, kind)}
+        </a>
+      );
+    }
     if (kind) {
       return (
         <Link className="api-reference-link" data-kind={kind} href={props.href}>

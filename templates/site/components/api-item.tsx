@@ -34,6 +34,7 @@ const itemKinds: Record<string, { label: string; icon: LucideIcon }> = {
   trait: { label: "Trait", icon: Shapes },
   trait_alias: { label: "Trait alias", icon: Shapes },
   type_alias: { label: "Type alias", icon: Type },
+  primitive: { label: "Primitive", icon: Type },
   constant: { label: "Constant", icon: Hash },
   static: { label: "Static", icon: Database },
   union: { label: "Union", icon: GitMerge },

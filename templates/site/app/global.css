@@ -20,6 +20,7 @@ html > body[data-scroll-locked] {
     --api-kind-union: #7c3aed;
     --api-kind-trait: #a16207;
     --api-kind-type-alias: #0284c7;
+    --api-kind-primitive: #0e7490;
     --api-kind-function: #15803d;
     --api-kind-constant: #c2410c;
     --api-kind-static: #be123c;
@@ -37,6 +38,7 @@ html[data-theme="dark"] {
     --api-kind-union: #c4b5fd;
     --api-kind-trait: #fbbf24;
     --api-kind-type-alias: #7dd3fc;
+    --api-kind-primitive: #67e8f9;
     --api-kind-function: #86efac;
     --api-kind-constant: #fdba74;
     --api-kind-static: #fda4af;
@@ -72,6 +74,10 @@ html[data-theme="dark"] {
 
 [data-kind="type_alias"] {
     --api-kind-color: var(--api-kind-type-alias);
+}
+
+[data-kind="primitive"] {
+    --api-kind-color: var(--api-kind-primitive);
 }
 
 [data-kind="function"] {
@@ -154,18 +160,21 @@ html[data-theme="dark"] {
     text-underline-offset: 0.2em;
 }
 
-.api-reference-link {
+.api-reference-link,
+a[data-kind] {
     display: inline;
     color: var(--api-kind-color, inherit);
     text-decoration: none;
 }
 
-.api-reference-link:hover {
+.api-reference-link:hover,
+a[data-kind]:hover {
     text-decoration: underline;
     text-underline-offset: 0.15em;
 }
 
-.api-reference-link code {
+.api-reference-link code,
+a[data-kind] code {
     color: inherit;
 }
 

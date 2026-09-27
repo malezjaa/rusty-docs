@@ -126,7 +126,7 @@ fn rewrite_signature_type_links(
     const LINK_SEPARATOR: char = '\u{e001}';
     const LINK_END: char = '\u{e002}';
 
-    let source = markdown.as_str();
+    let (frontmatter, source) = split_frontmatter(markdown);
     let mut output = String::with_capacity(source.len());
     let mut cursor = 0;
     while let Some(relative_start) = source[cursor..].find(LINK_START) {
@@ -180,7 +180,21 @@ fn rewrite_signature_type_links(
         cursor = end + LINK_END.len_utf8();
     }
     output.push_str(&source[cursor..]);
-    *markdown = output;
+    let mut rewritten = String::with_capacity(frontmatter.len() + output.len());
+    rewritten.push_str(frontmatter);
+    rewritten.push_str(&output);
+    *markdown = rewritten;
+}
+
+fn split_frontmatter(markdown: &str) -> (&str, &str) {
+    let Some(after_opening) = markdown.strip_prefix("---\n") else {
+        return ("", markdown);
+    };
+    let Some(end) = after_opening.find("\n---\n") else {
+        return ("", markdown);
+    };
+    let body_start = 4 + end + "\n---\n".len();
+    markdown.split_at(body_start)
 }
 
 const API_KIND_SECTIONS: &[(&str, &str)] = &[
@@ -248,6 +262,9 @@ fn add_api_component_imports(markdown: &str) -> String {
     let mut components = Vec::new();
     if markdown.contains("<ApiItemLink") {
         components.push("ApiItemLink");
+    }
+    if markdown.contains("<ApiItemMark") {
+        components.push("ApiItemMark");
     }
     if markdown.contains("<ApiSignature") {
         components.push("ApiSignature");
@@ -325,7 +342,8 @@ fn rewrite_link_tokens(
                 (href.as_str(), Some(kind.as_str()))
             }
         };
-        let href = html_escape_attribute(route);
+        *output = rewrite_named_reference_link_destinations(output, label, route, external_kind);
+        *output = rewrite_named_link_destinations(output, label, route, external_kind);
         let labels = if label.starts_with('`') && label.ends_with('`') {
             vec![(format!("[{label}]"), true)]
         } else {
@@ -341,16 +359,171 @@ fn rewrite_link_tokens(
                 } else {
                     html_escape_text(label)
                 };
-                format!(
-                    "<a href=\"{href}\" data-kind=\"{}\" target=\"_blank\" rel=\"noopener noreferrer\">{display_label}</a>",
-                    html_escape_attribute(kind)
-                )
+                external_api_link(route, kind, &display_label)
             } else {
                 format!("{token}({route})")
             };
             *output = replace_shortcut_link(output, &token, &replacement);
         }
     }
+}
+
+fn rewrite_named_reference_link_destinations(
+    markdown: &str,
+    name: &str,
+    href: &str,
+    external_kind: Option<&str>,
+) -> String {
+    let mut output = String::with_capacity(markdown.len());
+    let mut in_fenced_code = false;
+    let mut reference_labels = Vec::new();
+    for line in markdown.split_inclusive('\n') {
+        let trimmed_line = line.trim_start();
+        if trimmed_line.starts_with("```") || trimmed_line.starts_with("~~~") {
+            in_fenced_code = !in_fenced_code;
+            output.push_str(line);
+            continue;
+        }
+        if in_fenced_code {
+            output.push_str(line);
+            continue;
+        }
+
+        let line_without_ending = line.strip_suffix('\n').unwrap_or(line);
+        let leading_space = line_without_ending.len() - line_without_ending.trim_start().len();
+        if leading_space > 3 {
+            output.push_str(line);
+            continue;
+        }
+        let definition = &line_without_ending[leading_space..];
+        if !definition.starts_with('[') {
+            output.push_str(line);
+            continue;
+        }
+        let Some(label_end) = definition.find("]:") else {
+            output.push_str(line);
+            continue;
+        };
+        let destination_start = label_end + 2;
+        let destination_with_space = &definition[destination_start..];
+        let whitespace = destination_with_space.len() - destination_with_space.trim_start().len();
+        let destination = &destination_with_space[whitespace..];
+        let Some((target_start, target_end, target)) = markdown_link_destination(destination)
+        else {
+            output.push_str(line);
+            continue;
+        };
+        if target != name {
+            output.push_str(line);
+            continue;
+        }
+
+        reference_labels.push(definition[1..label_end].to_owned());
+        let target_start = leading_space + destination_start + whitespace + target_start;
+        let target_end = leading_space + destination_start + whitespace + target_end;
+        output.push_str(&line_without_ending[..target_start]);
+        output.push_str(href);
+        output.push_str(&line_without_ending[target_end..]);
+        if line.ends_with('\n') {
+            output.push('\n');
+        }
+    }
+
+    for label in reference_labels {
+        let token = format!("[{label}]");
+        let replacement = if let Some(kind) = external_kind {
+            let display_label = if label.starts_with('`') && label.ends_with('`') {
+                format!("<code>{}</code>", html_escape_text(label.trim_matches('`')))
+            } else {
+                html_escape_text(&label)
+            };
+            external_api_link(href, kind, &display_label)
+        } else {
+            format!("{token}({href})")
+        };
+        output = replace_shortcut_link(&output, &token, &replacement);
+    }
+
+    output
+}
+
+fn rewrite_named_link_destinations(
+    markdown: &str,
+    name: &str,
+    href: &str,
+    external_kind: Option<&str>,
+) -> String {
+    let mut output = String::with_capacity(markdown.len());
+    let mut cursor = 0;
+    while let Some(relative_end) = markdown[cursor..].find("](") {
+        let label_end = cursor + relative_end;
+        let Some(relative_start) = markdown[..label_end].rfind('[') else {
+            output.push_str(&markdown[cursor..]);
+            return output;
+        };
+        let label_start = relative_start + 1;
+        let open_paren = label_end + 1;
+        let Some(link_end) = markdown_link_end(markdown, open_paren) else {
+            output.push_str(&markdown[cursor..]);
+            return output;
+        };
+        let destination = markdown_link_destination(&markdown[open_paren + 1..link_end]);
+        if markdown[..relative_start].ends_with('!')
+            || inside_api_signature(markdown, relative_start)
+            || destination.is_none_or(|(_, _, destination)| destination != name)
+        {
+            let next_cursor = label_end + 2;
+            output.push_str(&markdown[cursor..next_cursor]);
+            cursor = next_cursor;
+            continue;
+        }
+
+        output.push_str(&markdown[cursor..relative_start]);
+        if let Some(kind) = external_kind {
+            let link_label = &markdown[label_start..label_end];
+            let display_label = if link_label.starts_with('`') && link_label.ends_with('`') {
+                format!(
+                    "<code>{}</code>",
+                    html_escape_text(link_label.trim_matches('`'))
+                )
+            } else {
+                html_escape_text(link_label)
+            };
+            output.push_str(&external_api_link(href, kind, &display_label));
+        } else {
+            let (destination_start, destination_end, _) =
+                destination.expect("matched destination must be present");
+            let destination_start = open_paren + 1 + destination_start;
+            let destination_end = open_paren + 1 + destination_end;
+            output.push_str(&markdown[relative_start..destination_start]);
+            output.push_str(href);
+            output.push_str(&markdown[destination_end..=link_end]);
+        }
+        cursor = link_end + 1;
+    }
+    output.push_str(&markdown[cursor..]);
+    output
+}
+
+fn external_api_link(href: &str, kind: &str, label: &str) -> String {
+    let href = html_escape_attribute(href);
+    let kind = html_escape_attribute(kind);
+    format!(
+        "<a className=\"api-reference-link\" href=\"{href}\" data-kind=\"{kind}\" target=\"_blank\" rel=\"noopener noreferrer\"><ApiItemMark compact kind=\"{kind}\" />{label}</a>"
+    )
+}
+
+fn markdown_link_destination(destination: &str) -> Option<(usize, usize, &str)> {
+    let leading_whitespace = destination.len() - destination.trim_start().len();
+    let destination = destination.trim_start();
+    if let Some(destination) = destination.strip_prefix('<') {
+        let (href, _) = destination.split_once('>')?;
+        let start = leading_whitespace;
+        return Some((start, start + href.len() + 2, href));
+    }
+    let href = destination.split_whitespace().next()?;
+    let start = leading_whitespace;
+    Some((start, start + href.len(), href))
 }
 
 fn replace_shortcut_link(markdown: &str, token: &str, replacement: &str) -> String {

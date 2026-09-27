@@ -25,7 +25,8 @@ const apiCrateRoutes = new Set(
 export function getApiItemKindForUrl(url: string) {
   const normalizedUrl = normalizePageUrl(url);
   return apiItemKinds.get(normalizedUrl)
-    ?? (apiCrateRoutes.has(normalizedUrl) ? 'crate' : undefined);
+    ?? (apiCrateRoutes.has(normalizedUrl) ? 'crate' : undefined)
+    ?? getRustdocItemKind(url);
 }
 
 export function getApiItemKindForSlugs(slugs: readonly string[]) {
@@ -60,4 +61,41 @@ function normalizePageUrl(url: string) {
       ? path.slice(basePath.length)
       : path;
   return pagePath.replace(/\/+$/, '') || '/';
+}
+
+function getRustdocItemKind(url: string) {
+  const [withoutFragment, fragment = ''] = url.split('#', 2);
+  const path = withoutFragment.split(/[?]/, 1)[0] ?? '';
+  const fileName = path.split('/').pop() ?? '';
+  if (fileName === 'index.html') return 'module';
+
+  const anchorKind = fragment.split('.', 1)[0] ?? '';
+  const anchorKinds: Record<string, string> = {
+    method: 'function',
+    ty_method: 'function',
+    tymethod: 'function',
+    associatedtype: 'type_alias',
+    associatedconstant: 'constant',
+    variant: 'variant',
+    structfield: 'field',
+  };
+  if (anchorKinds[anchorKind]) return anchorKinds[anchorKind];
+
+  const pageKind = fileName.split('.', 1)[0] ?? '';
+  const pageKinds: Record<string, string> = {
+    struct: 'struct',
+    enum: 'enum',
+    union: 'union',
+    trait: 'trait',
+    type: 'type_alias',
+    fn: 'function',
+    constant: 'constant',
+    static: 'static',
+    macro: 'macro',
+    proc_macro: 'proc_macro',
+    attr: 'proc_attribute',
+    derive: 'proc_derive',
+    primitive: 'primitive',
+  };
+  return pageKinds[pageKind];
 }
